@@ -34,6 +34,7 @@ export function WorkerSettingsDialog({
   const [bots, setBots] = useState<TelegramChannel[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [removingAccountId, setRemovingAccountId] = useState("");
   const [inputVal, setInputVal] = useState("");
   const [status, setStatus] = useState("");
   const [modelCurrent, setModelCurrent] = useState("");
@@ -111,11 +112,15 @@ export function WorkerSettingsDialog({
   };
 
   const handleRemove = async (accountId: string) => {
+    if (removingAccountId) return;
+    setRemovingAccountId(accountId);
     try {
       await telegramRemove(accountId);
       await loadBots();
     } catch {
       setStatus("移除失败");
+    } finally {
+      setRemovingAccountId("");
     }
   };
 
@@ -205,8 +210,9 @@ export function WorkerSettingsDialog({
                 <button
                   className={styles.removeBtn}
                   onClick={() => handleRemove(ch.accountId)}
+                  disabled={!!removingAccountId}
                 >
-                  移除
+                  {removingAccountId === ch.accountId ? "移除中..." : "移除"}
                 </button>
               </div>
             ))

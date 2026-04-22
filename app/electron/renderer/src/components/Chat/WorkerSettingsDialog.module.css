@@ -80,6 +80,11 @@
   cursor: pointer;
 }
 
+.removeBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .inputRow {
   display: flex;
   gap: 8px;

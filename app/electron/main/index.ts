@@ -706,6 +706,16 @@ class OpenClawService {
     return [...map.values()];
   }
 
+  private getGatewayToken(): string {
+    const configPath = path.join(this.userOpenClawHome, '.openclaw', 'openclaw.json');
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      return raw?.gateway?.auth?.token ?? '';
+    } catch {
+      return '';
+    }
+  }
+
   private readWorkerFile(workerPath: string, filename: string): string {
     const p = path.join(workerPath, filename);
     return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
@@ -882,9 +892,14 @@ class OpenClawService {
     const url = `http://127.0.0.1:${this.gatewayPort}/v1/chat/completions`;
     onLog?.('fetch → POST /v1/chat/completions');
     const t = Date.now();
+    const gatewayToken = this.getGatewayToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (gatewayToken) {
+      headers['Authorization'] = `Bearer ${gatewayToken}`;
+    }
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ model: gatewayModel, messages }),
     });
     onLog?.(`fetch ← ${res.status} (${Date.now() - t}ms)`);
