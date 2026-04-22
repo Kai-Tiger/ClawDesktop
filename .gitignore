@@ -1,0 +1,10 @@
+.claude/logs/
+.cache
+.vscode
+build/
+app/electron/dist/
+**/node_modules/
+runtime/
+runtime/
+app/electron/release/
+.DS_Store

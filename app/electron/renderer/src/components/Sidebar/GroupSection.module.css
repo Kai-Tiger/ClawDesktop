@@ -1,0 +1,93 @@
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.item:hover {
+  background: #f5f5f5;
+}
+
+.item.active {
+  border-color: #5b8cff;
+  background: #eef4ff;
+}
+
+.itemInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.count {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 1px;
+}
+
+.deleteBtn {
+  flex-shrink: 0;
+  opacity: 0;
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.1s, color 0.1s;
+}
+
+.item:hover .deleteBtn {
+  opacity: 1;
+}
+
+.deleteBtn:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.empty {
+  font-size: 12px;
+  opacity: 0.5;
+  margin: 0;
+}
+
+.createBtn {
+  margin-top: 8px;
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.createBtn:hover {
+  border-color: #9ca3af;
+  color: #374151;
+}

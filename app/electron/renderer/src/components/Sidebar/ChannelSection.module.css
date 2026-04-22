@@ -1,0 +1,188 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Telegram 折叠头 */
+.tgHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+  text-align: left;
+}
+
+.tgHeader:hover {
+  color: #111;
+}
+
+.arrow {
+  font-size: 10px;
+  width: 12px;
+  color: #9ca3af;
+}
+
+/* 展开内容 */
+.tgBody {
+  padding-left: 18px;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.empty {
+  margin: 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* Bot 已连接行 */
+.botRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #374151;
+}
+
+.botDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex-shrink: 0;
+}
+
+.botInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.botName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.botAgent {
+  font-size: 11px;
+  color: #9ca3af;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  margin-left: auto;
+  background: #e5e7eb;
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.removeBtn:hover {
+  color: #ef4444;
+}
+
+.addBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.statusMsg {
+  margin: 0;
+  font-size: 11px;
+  color: #ef4444;
+}
+
+/* 添加按钮 */
+.addBtn {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.addBtn:hover {
+  border-color: #9ca3af;
+  color: #374151;
+}
+
+/* 添加中：input + 确定/取消 */
+.addRow {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #6b7280;
+}
+
+.confirmBtn {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #111827;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.confirmBtn:hover {
+  background: #1f2937;
+}
+
+.cancelBtn {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cancelBtn:hover {
+  background: #f5f5f5;
+}

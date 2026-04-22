@@ -1,0 +1,178 @@
+.msg {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+.msg.user {
+  align-items: flex-end;
+}
+
+.msg.assistant {
+  align-items: flex-start;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+.time {
+  font-size: 10px;
+}
+
+.statusLines {
+  max-width: 85%;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.statusLine {
+  font-size: 11px;
+  color: #aaa;
+  line-height: 1.6;
+  padding: 0 2px;
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.markdown {
+  min-width: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote {
+  margin: 0;
+}
+
+.markdown p + p,
+.markdown p + ul,
+.markdown p + ol,
+.markdown ul + p,
+.markdown ol + p,
+.markdown pre + p,
+.markdown p + pre,
+.markdown blockquote + p {
+  margin-top: 0.5em;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.2em;
+}
+
+.markdown code {
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.markdown pre {
+  padding: 8px;
+  border-radius: 8px;
+  background: #111827;
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  white-space: pre;
+}
+
+.markdown :global(.hljs) {
+  color: #e5e7eb;
+  background: transparent;
+}
+
+.markdown :global(.hljs-comment),
+.markdown :global(.hljs-quote) {
+  color: #94a3b8;
+}
+
+.markdown :global(.hljs-keyword),
+.markdown :global(.hljs-selector-tag),
+.markdown :global(.hljs-literal),
+.markdown :global(.hljs-name) {
+  color: #f472b6;
+}
+
+.markdown :global(.hljs-string),
+.markdown :global(.hljs-attr),
+.markdown :global(.hljs-template-tag) {
+  color: #86efac;
+}
+
+.markdown :global(.hljs-number),
+.markdown :global(.hljs-symbol),
+.markdown :global(.hljs-bullet) {
+  color: #fbbf24;
+}
+
+.markdown :global(.hljs-title),
+.markdown :global(.hljs-section),
+.markdown :global(.hljs-selector-id) {
+  color: #93c5fd;
+}
+
+.markdown :global(.hljs-built_in),
+.markdown :global(.hljs-type),
+.markdown :global(.hljs-class) {
+  color: #67e8f9;
+}
+
+.multiBlocks {
+  max-width: 85%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inlineImage {
+  max-width: min(320px, 85vw);
+  max-height: 240px;
+  border-radius: 10px;
+  border: 1px solid #d5dbe8;
+  object-fit: contain;
+  background: #fff;
+}
+
+.user .bubble {
+  background: #5b8cff;
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.assistant .bubble {
+  background: #f0f0f0;
+  color: #111;
+  border-bottom-left-radius: 4px;
+}
+
+.thinking {
+  font-style: italic;
+  animation: shimmer 1.6s infinite linear;
+}
+
+@keyframes shimmer {
+  0%   { color: #aaa; }
+  40%  { color: #aaa; }
+  50%  { color: #d8d8d8; }
+  60%  { color: #aaa; }
+  100% { color: #aaa; }
+}
