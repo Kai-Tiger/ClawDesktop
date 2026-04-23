@@ -8,6 +8,7 @@
 
 ```
 cd app/electron
+npm install
 npm run dev
 
 // 打包为mac app
