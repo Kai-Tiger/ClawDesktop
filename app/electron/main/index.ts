@@ -325,12 +325,39 @@ class OpenClawService {
     opts?: { forceSkills?: boolean }
   ) {
     fs.mkdirSync(workspacePath, { recursive: true });
+    const openclawDataRoot = path.join(this.userOpenClawHome, '.openclaw');
+
+    const normalizeLegacyPaths = (content: string): string => {
+      return content
+        .replace(/\/home\/node\/\.openclaw\/workspace\//g, `${workspacePath}${path.sep}`)
+        .replace(/~\/\.openclaw\/workspace\//g, `${workspacePath}${path.sep}`)
+        .replace(/\/home\/node\/\.openclaw\//g, `${openclawDataRoot}${path.sep}`)
+        .replace(/~\/\.openclaw\//g, `${openclawDataRoot}${path.sep}`)
+        .replace(/\/Users\/[^/\s]+\/\.openclaw\/workspace-[^/\s)]+/g, workspacePath);
+    };
+
+    const localPathOverride = [
+      '',
+      '## Local Workspace Override (Clawin Desktop)',
+      `- Canonical workspace: ${workspacePath}`,
+      `- Skills directory: ${path.join(workspacePath, 'skills')}`,
+      '- Always read/write skills under the canonical workspace path above.',
+      '- Never use the system-global path ~/.openclaw/workspace-* in this app.'
+    ].join('\n');
 
     // agent 定义文件（由 app 管理，始终覆写）
     for (const f of ['SOUL.md', 'AGENTS.md', 'USER.md', 'TOOLS.md']) {
       const src = path.join(workerPath, f);
       if (fs.existsSync(src)) {
-        fs.copyFileSync(src, path.join(workspacePath, f));
+        const dst = path.join(workspacePath, f);
+        try {
+          const content = fs.readFileSync(src, 'utf8');
+          const normalized = normalizeLegacyPaths(content);
+          const withOverride = f === 'USER.md' ? `${normalized}\n${localPathOverride}\n` : normalized;
+          fs.writeFileSync(dst, withOverride, 'utf8');
+        } catch {
+          fs.copyFileSync(src, dst);
+        }
       }
     }
 
@@ -485,6 +512,9 @@ class OpenClawService {
           ...process.env,
           // 强制桌面版使用独立 HOME 与 profile，避免污染/依赖用户全局 OpenClaw 与 nvm
           OPENCLAW_HOME: home,
+          // 关键：部分工具链只读取 HOME（展开 ~/.openclaw），不读取 OPENCLAW_HOME
+          // 统一 HOME 到 app 专属目录，彻底避免写入系统 ~/.openclaw
+          HOME: home,
           OPENCLAW_PROFILE: profile,
           OPENCLAW_LAUNCHD_LABEL: `ai.openclaw.gateway.${profile}`,
           PATH: `${path.dirname(this.embeddedNodePath)}:${process.env.PATH || ''}`
@@ -583,6 +613,7 @@ class OpenClawService {
           env: {
             ...process.env,
             OPENCLAW_HOME: this.userOpenClawHome,
+            HOME: this.userOpenClawHome,
             OPENCLAW_PROFILE: this.openclawProfile,
             OPENCLAW_LAUNCHD_LABEL: `ai.openclaw.gateway.${this.openclawProfile}`,
             PATH: `${path.dirname(this.embeddedNodePath)}:${process.env.PATH || ''}`
@@ -931,6 +962,7 @@ class OpenClawService {
         env: {
           ...process.env,
           OPENCLAW_HOME: this.userOpenClawHome,
+          HOME: this.userOpenClawHome,
           OPENCLAW_PROFILE: this.openclawProfile,
           OPENCLAW_LAUNCHD_LABEL: `ai.openclaw.gateway.${this.openclawProfile}`,
           PATH: `${path.dirname(this.embeddedNodePath)}:${process.env.PATH || ''}`

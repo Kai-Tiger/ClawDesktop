@@ -95,6 +95,12 @@
   white-space: pre;
 }
 
+.markdown pre code,
+.markdown pre :global(.hljs),
+.markdown pre :global(.hljs *) {
+  color: #fff !important;
+}
+
 .markdown :global(.hljs) {
   color: #e5e7eb;
   background: transparent;
