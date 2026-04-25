@@ -132,3 +132,39 @@
   padding: 8px 12px;
   cursor: pointer;
 }
+
+.customModelSection {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eef1f7;
+}
+
+.customModelLabel {
+  font-size: 11px;
+  color: #8a93a4;
+  margin-bottom: 6px;
+}
+
+.customModelList {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.customModelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  background: #f5f7fb;
+  border-radius: 6px;
+}
+
+.customModelId {
+  font-size: 12px;
+  color: #3b5fd1;
+  font-family: monospace;
+  word-break: break-all;
+}

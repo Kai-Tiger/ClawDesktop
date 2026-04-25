@@ -12,8 +12,12 @@ export function MessageList() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+  }, [currentWorkerId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, currentWorkerId]);
+  }, [messages]);
 
   return (
     <div className={styles.list}>

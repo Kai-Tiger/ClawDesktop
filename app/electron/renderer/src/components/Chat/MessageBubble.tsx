@@ -4,6 +4,20 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./MessageBubble.module.css";
 
+const FILE_BLOCK_DISPLAY_LINES = 10;
+
+function normalizeNewlines(text: string) {
+  return text.replace(/\n{2,}/g, '\n');
+}
+
+function truncateFileBlocks(text: string): string {
+  return text.replace(/```(\w*)\n([\s\S]*?)\n```/g, (_, lang, code) => {
+    const lines = code.split('\n');
+    if (lines.length <= FILE_BLOCK_DISPLAY_LINES) return `\`\`\`${lang}\n${code}\n\`\`\``;
+    return `\`\`\`${lang}\n${lines.slice(0, FILE_BLOCK_DISPLAY_LINES).join('\n')}\n...\n\`\`\``;
+  });
+}
+
 interface MessageBubbleProps extends ChatMessage {
   workerName?: string;
 }
@@ -19,7 +33,7 @@ export function MessageBubble({
     return (
       <div className={styles.markdown}>
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-          {text}
+          {normalizeNewlines(text)}
         </ReactMarkdown>
       </div>
     );
@@ -48,7 +62,7 @@ export function MessageBubble({
       </div> */}
       {typeof content === 'string' ? (
         <div className={`${styles.bubble} ${(content === '思考中…' || content === '思考中...') ? styles.thinking : ''}`}>
-          {renderMarkdown(content)}
+          {renderMarkdown(truncateFileBlocks(content))}
         </div>
       ) : (
         <div className={styles.multiBlocks}>

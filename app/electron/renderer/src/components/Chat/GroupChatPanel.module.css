@@ -212,3 +212,264 @@
   border-radius: 6px;
   border: 1px solid #fde68a;
 }
+
+.systemMsg {
+  text-align: center;
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 6px 0;
+  user-select: none;
+}
+
+.csvChip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #eef4ff;
+  border: 1px solid #c7d9ff;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #3b6fd4;
+  width: fit-content;
+}
+
+.csvChipRemove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.csvChipRemove:hover {
+  color: #ef4444;
+}
+
+.attachBtn {
+  align-self: flex-end;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.attachBtn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.attachBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.addWorkerWrap {
+  position: relative;
+  margin-left: 4px;
+}
+
+.addWorkerBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 16px;
+  line-height: 1;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.addWorkerBtn:hover {
+  border-color: #5b8cff;
+  color: #5b8cff;
+}
+
+.addWorkerDropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 300;
+  overflow: hidden;
+}
+
+.addWorkerTitle {
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 12px 4px;
+}
+
+.addWorkerItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: #111827;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.addWorkerItem:hover {
+  background: #f3f4f6;
+}
+
+.addWorkerEmpty {
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.composerToolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clearBtn {
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.clearBtn:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #ef4444;
+}
+
+.clearBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.debugToggle {
+  margin-left: 4px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  font-size: 11px;
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.debugToggle:hover {
+  background: #f3f4f6;
+}
+
+.debugToggleOn {
+  background: #fef9c3;
+  border-color: #fde047;
+  color: #854d0e;
+}
+
+.debugMsg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  border-left: 3px solid #f59e0b;
+}
+
+.debugMsgLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: #92400e;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.debugMsgContent {
+  font-size: 12px;
+  color: #78350f;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.markdown {
+  min-width: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote {
+  margin: 0;
+}
+
+.markdown p + p,
+.markdown p + ul,
+.markdown p + ol,
+.markdown ul + p,
+.markdown ol + p,
+.markdown pre + p,
+.markdown p + pre,
+.markdown blockquote + p {
+  margin-top: 0.5em;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.2em;
+}
+
+.markdown code {
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.markdown pre {
+  padding: 8px;
+  border-radius: 8px;
+  background: #111827;
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  white-space: pre;
+}
+
+.markdown pre code,
+.markdown pre :global(.hljs),
+.markdown pre :global(.hljs *) {
+  color: #fff !important;
+}
+
+.markdown :global(.hljs) {
+  color: #e5e7eb;
+  background: transparent;
+}

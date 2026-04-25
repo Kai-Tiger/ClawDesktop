@@ -47,8 +47,12 @@ interface GatewayApi {
   groupsList: () => Promise<GroupChannel[]>;
   groupsCreate: (name: string, workerIds: string[]) => Promise<GroupChannel>;
   groupsDelete: (id: string) => Promise<{ ok: boolean }>;
+  groupsUpdate: (id: string, workerIds: string[]) => Promise<{ ok: boolean; error?: string }>;
   toggleDevTools: () => Promise<void>;
   openDashboard: () => Promise<void>;
+  workerOpenOpenClawDir: () => Promise<string>;
+  workerOpenWorkerDir: (workerId: string) => Promise<string>;
+  workerUpdateMeta: (workerId: string, name: string, description: string) => Promise<{ ok: boolean; error?: string }>;
   getModel: () => Promise<string>;
   setModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
   getWorkerModel: (workerId: string) => Promise<string>;
@@ -56,6 +60,10 @@ interface GatewayApi {
   workerDelete: (workerId: string) => Promise<{ ok: boolean; error?: string }>;
   getChatHistory: () => Promise<ChatHistory>;
   saveHistory: (data: ChatHistory) => void;
+  clearWorkerSessions: (workerIds: string[]) => Promise<void>;
+  coordinatorGetModel: () => Promise<string>;
+  coordinatorSetModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
+  coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) => Promise<string>;
   onChatChunk: (cb: (data: { workerId: string; chunk: string }) => void) => () => void;
   onChatStatus: (cb: (data: { workerId: string; status: string }) => void) => () => void;
 }
@@ -92,8 +100,12 @@ export const workerInstallSkillFromDir = (workerId: string, skillDirPath: string
 export const groupsList = () => api().groupsList();
 export const groupsCreate = (name: string, workerIds: string[]) => api().groupsCreate(name, workerIds);
 export const groupsDelete = (id: string) => api().groupsDelete(id);
+export const groupsUpdate = (id: string, workerIds: string[]) => api().groupsUpdate(id, workerIds);
 export const toggleDevTools = () => api().toggleDevTools();
 export const openDashboard = () => api().openDashboard();
+export const workerOpenOpenClawDir = () => api().workerOpenOpenClawDir();
+export const workerOpenWorkerDir = (workerId: string) => api().workerOpenWorkerDir(workerId);
+export const workerUpdateMeta = (workerId: string, name: string, description: string) => api().workerUpdateMeta(workerId, name, description);
 export const getModel = () => api().getModel();
 export const setModel = (model: string) => api().setModel(model);
 export const getWorkerModel = (workerId: string) => api().getWorkerModel(workerId);
@@ -101,6 +113,11 @@ export const setWorkerModel = (workerId: string, model: string) => api().setWork
 export const workerDelete = (workerId: string) => api().workerDelete(workerId);
 export const getChatHistory = () => api().getChatHistory();
 export const saveHistory = (data: ChatHistory) => api().saveHistory(data);
+export const clearWorkerSessions = (workerIds: string[]) => api().clearWorkerSessions(workerIds);
+export const coordinatorGetModel = () => api().coordinatorGetModel();
+export const coordinatorSetModel = (model: string) => api().coordinatorSetModel(model);
+export const coordinatorPlan = (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) =>
+  api().coordinatorPlan(payload);
 export const onChatChunk = (cb: (data: { workerId: string; chunk: string }) => void) =>
   api().onChatChunk(cb);
 export const onChatStatus = (cb: (data: { workerId: string; status: string }) => void) =>

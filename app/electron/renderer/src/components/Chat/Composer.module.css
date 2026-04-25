@@ -23,7 +23,10 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: flex-start;
 }
+
+/* ── Image preview ─────────────────────────────────────────────── */
 
 .previewCard {
   position: relative;
@@ -50,7 +53,80 @@
   cursor: pointer;
   line-height: 1;
   font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+/* ── File card ─────────────────────────────────────────────────── */
+
+.fileCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d5dbe8;
+  border-radius: 8px;
+  background: #f7f8fc;
+  max-width: 240px;
+  position: relative;
+}
+
+.fileIcon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.fileInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.fileName {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fileMeta {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.truncatedBadge {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.fileDelete {
+  flex-shrink: 0;
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.fileDelete:hover {
+  color: #ef4444;
+  border-color: #fca5a5;
+}
+
+/* ── Error ─────────────────────────────────────────────────────── */
 
 .error {
   grid-area: error;
@@ -58,13 +134,7 @@
   font-size: 12px;
 }
 
-.actions {
-  grid-area: actions;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 6px;
-}
+/* ── Textarea ──────────────────────────────────────────────────── */
 
 .input {
   grid-area: input;
@@ -88,8 +158,28 @@
   opacity: 0.6;
 }
 
-.btn {
+/* ── Actions column ────────────────────────────────────────────── */
+
+.actions {
+  grid-area: actions;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.attachBtns {
+  display: flex;
+  gap: 4px;
+}
+
+.sendBtns {
+  display: flex;
+  gap: 4px;
   align-self: flex-end;
+}
+
+.btn {
   padding: 8px 16px;
   background: #5b8cff;
   color: #fff;
@@ -102,8 +192,17 @@
   transition: background 0.15s;
 }
 
+.btn:hover {
+  background: #4070e8;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btnAttach {
-  padding: 6px 12px;
+  padding: 6px 10px;
   background: #f7f7fb;
   color: #3b4a6b;
   border: 1px solid #d9deea;
@@ -117,17 +216,8 @@
   color: #1e3a8a;
 }
 
-.btn:hover {
-  background: #4070e8;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .btnNew {
-  padding: 6px 16px;
+  padding: 6px 10px;
   background: transparent;
   color: #999;
   border: 1px solid #ddd;
@@ -136,7 +226,7 @@
   font-size: 18px;
   font-weight: 400;
   line-height: 1;
-  min-width: 52px;
+  min-width: 36px;
   transition: color 0.15s, border-color 0.15s;
 }
 

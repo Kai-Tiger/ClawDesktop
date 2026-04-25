@@ -51,13 +51,6 @@
   flex-shrink: 0;
 }
 
-.skillControls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
 .skillBtn {
   display: flex;
   align-items: center;
@@ -71,29 +64,6 @@
   cursor: default;
   line-height: 1.4;
   white-space: nowrap;
-}
-
-.skillAddBtn {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  border: 1px dashed #d1d5db;
-  background: #fff;
-  font-size: 14px;
-  line-height: 1;
-  color: #6b7280;
-  cursor: pointer;
-  padding: 0;
-}
-
-.skillAddBtn:hover:not(:disabled) {
-  border-color: #9ca3af;
-  color: #374151;
-}
-
-.skillAddBtn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .skillTooltipVisible {
@@ -189,6 +159,79 @@
   line-height: 1.4;
 }
 
+.workerMenuWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.workerMenuBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.workerMenuBtn:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.workerMenuDropdownVisible {
+  display: flex !important;
+}
+
+.workerMenuDropdown {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 110px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.workerMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #374151;
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workerMenuItem:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.workerMenuItem:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.workerMenuItem + .workerMenuItem {
+  border-top: 1px solid #f3f4f6;
+}
+
 .empty {
   font-size: 12px;
   opacity: 0.5;
@@ -276,6 +319,58 @@
   margin: 4px 0 0;
   font-size: 11px;
   color: #ef4444;
+}
+
+.metaDialog {
+  width: 380px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.metaDialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 18px;
+}
+
+.metaLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metaLabelText {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+}
+
+.metaInput {
+  border: 1px solid #d1d5db;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 13px;
+  outline: none;
+  color: #111827;
+  background: #fff;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.metaInput:focus {
+  border-color: #5b8cff;
+}
+
+.metaInputDisabled {
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
 }
 
 .editorOverlay {
@@ -381,3 +476,4 @@
   font-size: 12px;
   color: #ef4444;
 }
+

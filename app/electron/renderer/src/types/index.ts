@@ -116,8 +116,20 @@ export interface GroupChannel {
 
 export interface GroupMessage {
   id: string;
-  role: 'user' | 'worker';
+  role: 'user' | 'worker' | 'system' | 'debug';
   workerId?: string;
   workerName?: string;
   content: string;
+}
+
+export interface CoordinatorTask {
+  id: string;
+  workerId: string;
+  message: string;
+  after: string[];
+}
+
+export interface CoordinatorPlan {
+  analysis: string;
+  tasks: CoordinatorTask[];
 }

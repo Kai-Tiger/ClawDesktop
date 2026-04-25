@@ -39,8 +39,12 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   groupsList: () => ipcRenderer.invoke('groups:list'),
   groupsCreate: (name: string, workerIds: string[]) => ipcRenderer.invoke('groups:create', name, workerIds),
   groupsDelete: (id: string) => ipcRenderer.invoke('groups:delete', id),
+  groupsUpdate: (id: string, workerIds: string[]) => ipcRenderer.invoke('groups:update', id, workerIds),
   toggleDevTools: () => ipcRenderer.invoke('debug:toggle-devtools'),
   openDashboard: () => ipcRenderer.invoke('debug:open-dashboard'),
+  workerOpenOpenClawDir: () => ipcRenderer.invoke('workers:open-openclaw-dir'),
+  workerOpenWorkerDir: (workerId: string) => ipcRenderer.invoke('workers:open-worker-dir', workerId),
+  workerUpdateMeta: (workerId: string, name: string, description: string) => ipcRenderer.invoke('workers:update-meta', workerId, name, description),
   getModel: () => ipcRenderer.invoke('settings:getModel'),
   setModel: (model: string) => ipcRenderer.invoke('settings:setModel', model),
   getWorkerModel: (workerId: string) => ipcRenderer.invoke('settings:getWorkerModel', workerId),
@@ -48,6 +52,11 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   workerDelete: (workerId: string) => ipcRenderer.invoke('workers:delete', workerId),
   getChatHistory: () => ipcRenderer.invoke('chat:getHistory'),
   saveHistory: (data: unknown) => ipcRenderer.send('chat:saveHistory', data),
+  clearWorkerSessions: (workerIds: string[]) => ipcRenderer.invoke('chat:clearWorkerSessions', workerIds),
+  coordinatorGetModel: () => ipcRenderer.invoke('coordinator:getModel'),
+  coordinatorSetModel: (model: string) => ipcRenderer.invoke('coordinator:setModel', model),
+  coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) =>
+    ipcRenderer.invoke('coordinator:plan', payload),
   onChatChunk: (cb: (data: { workerId: string; chunk: string }) => void) => {
     const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; chunk: string }) => cb(data);
     ipcRenderer.on('chat:chunk', handler);

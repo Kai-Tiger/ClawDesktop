@@ -10,12 +10,25 @@ import { useChatStore } from "../../store/chatStore";
 import type { TelegramChannel } from "../../types";
 import styles from "./WorkerSettingsDialog.module.css";
 
-const MODELS = [
+const BUILTIN_MODELS = [
   { id: "minimax/minimax-m2.5", label: "MiniMax M2.5" },
   { id: "xiaomi/mimo-v2-pro", label: "MiMo v2 Pro" },
   { id: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
   { id: "openai/gpt-5-nano", label: "GPT-5 Nano" },
+  { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+  { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+  { id: "google/gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
 ];
+
+const CUSTOM_MODELS_KEY = "openclaw_custom_models";
+
+function loadCustomModels(): { id: string; label: string }[] {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_MODELS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
 
 interface Props {
   open: boolean;
@@ -40,6 +53,9 @@ export function WorkerSettingsDialog({
   const [modelCurrent, setModelCurrent] = useState("");
   const [modelSelected, setModelSelected] = useState("");
   const [modelSaving, setModelSaving] = useState(false);
+  const [customModels, setCustomModels] =
+    useState<{ id: string; label: string }[]>(loadCustomModels);
+  const [customInput, setCustomInput] = useState("");
 
   const loadBots = async () => {
     setRefreshing(true);
@@ -55,17 +71,41 @@ export function WorkerSettingsDialog({
     }
   };
 
+  const allModels = [...BUILTIN_MODELS, ...customModels];
+
   const loadModel = async () => {
     try {
       const m = await getWorkerModel(workerId);
-      const model = m || MODELS[0].id;
+      const model = m || "xiaomi/mimo-v2-pro";
       setModelCurrent(model);
       setModelSelected(model);
     } catch {
-      const fallback = MODELS[0].id;
-      setModelCurrent(fallback);
-      setModelSelected(fallback);
+      setModelCurrent("xiaomi/mimo-v2-pro");
+      setModelSelected("xiaomi/mimo-v2-pro");
     }
+  };
+
+  const handleAddCustomModel = () => {
+    const id = customInput.trim();
+    if (!id) return;
+    if (allModels.some((m) => m.id === id)) {
+      setStatus("该模型已存在");
+      return;
+    }
+    const label = id.includes("/") ? id.split("/").slice(1).join("/") : id;
+    const updated = [...customModels, { id, label }];
+    setCustomModels(updated);
+    localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(updated));
+    setModelSelected(id);
+    setCustomInput("");
+    setStatus(`已添加: ${id}`);
+  };
+
+  const handleRemoveCustomModel = (id: string) => {
+    const updated = customModels.filter((m) => m.id !== id);
+    setCustomModels(updated);
+    localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(updated));
+    if (modelSelected === id) setModelSelected("xiaomi/mimo-v2-pro");
   };
 
   useEffect(() => {
@@ -102,7 +142,8 @@ export function WorkerSettingsDialog({
       }
       setInputVal("");
       const latest = await loadBots();
-      const accountId = latest.find((b) => b.agentId === workerId)?.accountId || "default";
+      const accountId =
+        latest.find((b) => b.agentId === workerId)?.accountId || "default";
       setStatus(`绑定成功（账号：${accountId}）`);
     } catch {
       setStatus("绑定失败");
@@ -161,11 +202,24 @@ export function WorkerSettingsDialog({
               value={modelSelected}
               onChange={(e) => setModelSelected(e.target.value)}
             >
-              {MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
+              {BUILTIN_MODELS.length > 0 && (
+                <optgroup label="内置模型">
+                  {BUILTIN_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {customModels.length > 0 && (
+                <optgroup label="自定义模型">
+                  {customModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <button
               className={styles.bindBtn}
@@ -174,6 +228,43 @@ export function WorkerSettingsDialog({
             >
               {modelSaving ? "..." : "保存"}
             </button>
+          </div>
+
+          <div className={styles.customModelSection}>
+            <div className={styles.customModelLabel}>
+              添加 OpenRouter 自定义模型
+            </div>
+            <div className={styles.inputRow}>
+              <input
+                className={styles.input}
+                placeholder="例如: meta-llama/llama-3.1-405b"
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddCustomModel()}
+              />
+              <button
+                className={styles.bindBtn}
+                onClick={handleAddCustomModel}
+                disabled={!customInput.trim()}
+              >
+                添加
+              </button>
+            </div>
+            {customModels.length > 0 && (
+              <div className={styles.customModelList}>
+                {customModels.map((m) => (
+                  <div key={m.id} className={styles.customModelRow}>
+                    <span className={styles.customModelId}>{m.id}</span>
+                    <button
+                      className={styles.removeBtn}
+                      onClick={() => handleRemoveCustomModel(m.id)}
+                    >
+                      移除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

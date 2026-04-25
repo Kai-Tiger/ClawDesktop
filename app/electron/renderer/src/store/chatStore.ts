@@ -30,6 +30,7 @@ interface ChatStore {
   selectGroup: (id: string) => void;
   addGroupMessage: (groupId: string, msg: GroupMessage) => void;
   updateGroupMessage: (groupId: string, msgId: string, content: string) => void;
+  clearGroupMessages: (groupId: string) => void;
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -124,6 +125,9 @@ export const useChatStore = create<ChatStore>((set) => ({
       if (idx >= 0) list[idx] = { ...list[idx], content };
       return { groupMessages: { ...state.groupMessages, [groupId]: list } };
     }),
+
+  clearGroupMessages: (groupId) =>
+    set((state) => ({ groupMessages: { ...state.groupMessages, [groupId]: [] } })),
 }));
 
 let _saveTimer: ReturnType<typeof setTimeout> | null = null;

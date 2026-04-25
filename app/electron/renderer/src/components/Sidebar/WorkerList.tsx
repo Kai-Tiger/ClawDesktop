@@ -11,6 +11,8 @@ import {
   workerReadSkill,
   workerSaveSkill,
   workerInstallSkillFromDir,
+  workerOpenWorkerDir,
+  workerUpdateMeta,
 } from "../../api/gateway";
 import type { WorkerZipProbe, SkillMeta } from "../../types";
 import { ImportWorkerDialog } from "./ImportWorkerDialog";
@@ -46,10 +48,19 @@ export function WorkerList({
   const [installingSkillWorkerId, setInstallingSkillWorkerId] = useState<
     string | null
   >(null);
-  const [activeSkillTooltip, setActiveSkillTooltip] = useState<string | null>(
-    null,
-  );
+  const [activeSkillTooltip, setActiveSkillTooltip] = useState<string | null>(null);
   const skillTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeWorkerMenu, setActiveWorkerMenu] = useState<string | null>(null);
+  const workerMenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [editingWorker, setEditingWorker] = useState<{
+    id: string;
+    name: string;
+    description: string;
+  } | null>(null);
+  const [editWorkerName, setEditWorkerName] = useState("");
+  const [editWorkerDesc, setEditWorkerDesc] = useState("");
+  const [savingWorkerMeta, setSavingWorkerMeta] = useState(false);
+  const [workerMetaError, setWorkerMetaError] = useState("");
 
   useEffect(() => {
     workers
@@ -118,13 +129,45 @@ export function WorkerList({
     try {
       const res = await chatSend(
         workerId,
-        "请按照你的设定，向用户发送一条欢迎消息，介绍你自己的能力和使用方式。不要提及这条触发指令本身。",
+        "请按照你的设定，向用户发送一条欢迎消息，介绍你自己的能力和使用方式。不要提及这条触发指令本身。三百字以内。",
         undefined,
         [],
       );
       updateLastMessage(workerId, res.reply || "你好，我已准备好为你服务。");
     } catch {
       updateLastMessage(workerId, "你好，我已准备好为你服务。");
+    }
+  }
+
+  function openWorkerMetaEditor(w: { id: string; name: string; description?: string }) {
+    setWorkerMetaError("");
+    setEditWorkerName(w.name);
+    setEditWorkerDesc(w.description ?? "");
+    setEditingWorker({ id: w.id, name: w.name, description: w.description ?? "" });
+    setActiveWorkerMenu(null);
+  }
+
+  async function handleWorkerMetaSave() {
+    if (!editingWorker || savingWorkerMeta) return;
+    const trimmedName = editWorkerName.trim();
+    if (!trimmedName) {
+      setWorkerMetaError("名称不能为空");
+      return;
+    }
+    setWorkerMetaError("");
+    setSavingWorkerMeta(true);
+    try {
+      const result = await workerUpdateMeta(editingWorker.id, trimmedName, editWorkerDesc.trim());
+      if (!result.ok) {
+        setWorkerMetaError(result.error || "保存失败");
+        return;
+      }
+      onImportSuccess?.();
+      setEditingWorker(null);
+    } catch {
+      setWorkerMetaError("保存失败");
+    } finally {
+      setSavingWorkerMeta(false);
     }
   }
 
@@ -225,76 +268,100 @@ export function WorkerList({
                       <div className={styles.desc}>{w.description}</div>
                     )}
                   </div>
-                  {w.mode === "agent" && (
+                  {w.mode === "agent" && skills.length > 0 && (
                     <div
-                      className={styles.skillControls}
+                      className={styles.skillBtnWrap}
                       onClick={(e) => e.stopPropagation()}
+                      onMouseEnter={() => {
+                        if (skillTooltipTimer.current) {
+                          clearTimeout(skillTooltipTimer.current);
+                          skillTooltipTimer.current = null;
+                        }
+                        setActiveSkillTooltip(w.id);
+                      }}
+                      onMouseLeave={() => {
+                        skillTooltipTimer.current = setTimeout(() => {
+                          setActiveSkillTooltip(null);
+                        }, 300);
+                      }}
                     >
-                      {skills.length > 0 && (
-                        <div
-                          className={styles.skillBtnWrap}
-                          onMouseEnter={() => {
-                            if (skillTooltipTimer.current) {
-                              clearTimeout(skillTooltipTimer.current);
-                              skillTooltipTimer.current = null;
-                            }
-                            setActiveSkillTooltip(w.id);
-                          }}
-                          onMouseLeave={() => {
-                            skillTooltipTimer.current = setTimeout(() => {
-                              setActiveSkillTooltip(null);
-                            }, 300);
-                          }}
-                        >
-                          <button className={styles.skillBtn}>
-                            ⚡{skills.length}
-                          </button>
-                          <div
-                            className={`${styles.skillTooltip} ${activeSkillTooltip === w.id ? styles.skillTooltipVisible : ""}`}
-                          >
-                            <div className={styles.tooltipTitle}>Skills</div>
-                            {skills.map((s) => (
-                              <div
-                                key={s.id || s.name}
-                                className={styles.tooltipItem}
-                              >
-                                <div className={styles.tooltipHead}>
-                                  <span className={styles.tooltipName}>
-                                    {s.name}
-                                  </span>
-                                  <button
-                                    className={styles.tooltipEditBtn}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      void handleSkillEditOpen(w.id, s);
-                                    }}
-                                  >
-                                    Edit
-                                  </button>
-                                </div>
-                                {s.description && (
-                                  <span className={styles.tooltipDesc}>
-                                    {s.description}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      <button
-                        className={styles.skillAddBtn}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleSkillImportClick(w.id);
-                        }}
-                        disabled={installingSkillWorkerId === w.id}
-                        title="添加 Skill"
-                      >
-                        {installingSkillWorkerId === w.id ? "..." : "+"}
+                      <button className={styles.skillBtn}>
+                        ⚡{skills.length}
                       </button>
+                      <div
+                        className={`${styles.skillTooltip} ${activeSkillTooltip === w.id ? styles.skillTooltipVisible : ""}`}
+                      >
+                        <div className={styles.tooltipTitle}>Skills</div>
+                        {skills.map((s) => (
+                          <div
+                            key={s.id || s.name}
+                            className={styles.tooltipItem}
+                          >
+                            <div className={styles.tooltipHead}>
+                              <span className={styles.tooltipName}>
+                                {s.name}
+                              </span>
+                              <button
+                                className={styles.tooltipEditBtn}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleSkillEditOpen(w.id, s);
+                                }}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                            {s.description && (
+                              <span className={styles.tooltipDesc}>
+                                {s.description}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
+                  <div
+                    className={styles.workerMenuWrap}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseEnter={() => {
+                      if (workerMenuTimer.current) {
+                        clearTimeout(workerMenuTimer.current);
+                        workerMenuTimer.current = null;
+                      }
+                      setActiveWorkerMenu(w.id);
+                    }}
+                    onMouseLeave={() => {
+                      workerMenuTimer.current = setTimeout(() => {
+                        setActiveWorkerMenu(null);
+                      }, 200);
+                    }}
+                  >
+                    <button className={styles.workerMenuBtn}>···</button>
+                    <div
+                      className={`${styles.workerMenuDropdown} ${activeWorkerMenu === w.id ? styles.workerMenuDropdownVisible : ""}`}
+                    >
+                      <button
+                        className={styles.workerMenuItem}
+                        disabled={installingSkillWorkerId === w.id}
+                        onClick={() => void handleSkillImportClick(w.id)}
+                      >
+                        {installingSkillWorkerId === w.id ? "导入中…" : "导入 Skill"}
+                      </button>
+                      <button
+                        className={styles.workerMenuItem}
+                        onClick={() => void workerOpenWorkerDir(w.id)}
+                      >
+                        打开目录
+                      </button>
+                      <button
+                        className={styles.workerMenuItem}
+                        onClick={() => openWorkerMetaEditor(w)}
+                      >
+                        编辑信息
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </li>
             );
@@ -358,8 +425,66 @@ export function WorkerList({
         />
       )}
 
+      {editingWorker && (
+        <div className={styles.editorOverlay} onClick={() => { if (!savingWorkerMeta) setEditingWorker(null); }}>
+          <div className={styles.metaDialog} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.editorHeader}>
+              <div className={styles.editorTitle}>编辑 Worker 信息</div>
+              <div className={styles.editorActions}>
+                <button
+                  className={styles.editorBtn}
+                  onClick={() => setEditingWorker(null)}
+                  disabled={savingWorkerMeta}
+                >
+                  取消
+                </button>
+                <button
+                  className={styles.editorPrimaryBtn}
+                  onClick={() => void handleWorkerMetaSave()}
+                  disabled={savingWorkerMeta}
+                >
+                  {savingWorkerMeta ? "保存中…" : "保存"}
+                </button>
+              </div>
+            </div>
+            <div className={styles.metaDialogBody}>
+              <label className={styles.metaLabel}>
+                <span className={styles.metaLabelText}>ID（不可修改）</span>
+                <input
+                  className={`${styles.metaInput} ${styles.metaInputDisabled}`}
+                  value={editingWorker.id}
+                  disabled
+                />
+              </label>
+              <label className={styles.metaLabel}>
+                <span className={styles.metaLabelText}>名称</span>
+                <input
+                  className={styles.metaInput}
+                  value={editWorkerName}
+                  onChange={(e) => setEditWorkerName(e.target.value)}
+                  placeholder="Worker 名称"
+                  autoFocus
+                />
+              </label>
+              <label className={styles.metaLabel}>
+                <span className={styles.metaLabelText}>描述</span>
+                <input
+                  className={styles.metaInput}
+                  value={editWorkerDesc}
+                  onChange={(e) => setEditWorkerDesc(e.target.value)}
+                  placeholder="可选描述"
+                />
+              </label>
+              {workerMetaError && (
+                <div className={styles.editorError}>{workerMetaError}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingSkill && (
-        <div className={styles.editorOverlay} onClick={closeSkillEditor}>
+        <div className={styles.editorOverlay} onClick={() => closeSkillEditor()}>
           <div
             className={styles.editorDialog}
             onClick={(e) => e.stopPropagation()}
@@ -371,7 +496,7 @@ export function WorkerList({
               <div className={styles.editorActions}>
                 <button
                   className={styles.editorBtn}
-                  onClick={closeSkillEditor}
+                  onClick={() => closeSkillEditor()}
                   disabled={savingSkill}
                 >
                   取消

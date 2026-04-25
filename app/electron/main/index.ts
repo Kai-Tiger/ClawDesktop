@@ -336,13 +336,24 @@ class OpenClawService {
         .replace(/\/Users\/[^/\s]+\/\.openclaw\/workspace-[^/\s)]+/g, workspacePath);
     };
 
+    const skillsPath = path.join(workspacePath, 'skills');
+    const parentDir = path.dirname(workspacePath);
     const localPathOverride = [
       '',
       '## Local Workspace Override (Clawin Desktop)',
+      '',
+      '### YOUR WORKSPACE (read/write allowed)',
       `- Canonical workspace: ${workspacePath}`,
-      `- Skills directory: ${path.join(workspacePath, 'skills')}`,
-      '- Always read/write skills under the canonical workspace path above.',
-      '- Never use the system-global path ~/.openclaw/workspace-* in this app.'
+      `- Skills directory: ${skillsPath}`,
+      '',
+      '### ABSOLUTE FILE ACCESS RULES — MUST FOLLOW WITHOUT EXCEPTION',
+      `- You MUST only read and write files inside: ${workspacePath}`,
+      `- The parent directory ${parentDir} contains workspaces of OTHER agents. You MUST NOT access, list, read, or write any path inside ${parentDir} except your own workspace above.`,
+      '- NEVER use paths like ~/.openclaw/, ~/. openclaw/workspace-*, or any sibling workspace-* directory.',
+      '- NEVER resolve, glob, or traverse parent directories to discover other workspaces.',
+      '- If a skill name you are asked to edit exists in your skills directory, edit ONLY the copy at your canonical path.',
+      `- Any file operation whose resolved absolute path does not start with "${workspacePath}" is FORBIDDEN.`,
+      '- When in doubt about a file path, refuse the operation and ask the user to clarify.',
     ].join('\n');
 
     // agent 定义文件（由 app 管理，始终覆写）
@@ -449,7 +460,7 @@ class OpenClawService {
   }
 
   /** 清除指定 agent 的 session 快照，强制下次运行时重新发现 skills */
-  private clearAgentSessionSnapshot(agentId: string): void {
+  clearAgentSessionSnapshot(agentId: string): void {
     const sessionsJson = path.join(
       this.userOpenClawHome, '.openclaw', 'agents', agentId, 'sessions', 'sessions.json'
     );
@@ -724,6 +735,15 @@ class OpenClawService {
 
   deleteGroup(id: string): { ok: boolean } {
     const groups = this.listGroups().filter((g) => g.id !== id);
+    fs.writeFileSync(this.groupsFilePath, JSON.stringify(groups, null, 2), 'utf8');
+    return { ok: true };
+  }
+
+  updateGroup(id: string, workerIds: string[]): { ok: boolean; error?: string } {
+    const groups = this.listGroups();
+    const idx = groups.findIndex((g) => g.id === id);
+    if (idx === -1) return { ok: false, error: 'group 不存在' };
+    groups[idx] = { ...groups[idx], workerIds };
     fs.writeFileSync(this.groupsFilePath, JSON.stringify(groups, null, 2), 'utf8');
     return { ok: true };
   }
@@ -1426,6 +1446,23 @@ class OpenClawService {
     return { tempDir, rootDir, suggestedId, suggestedName, suggestedDescription };
   }
 
+  updateWorkerMeta(workerId: string, name: string, description: string): { ok: boolean; error?: string } {
+    const searchRoots = [this.userImportedWorkersRoot, this.workersRoot];
+    for (const root of searchRoots) {
+      const metaPath = path.join(root, workerId, 'worker.json');
+      if (fs.existsSync(metaPath)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          fs.writeFileSync(metaPath, JSON.stringify({ ...raw, name, description }, null, 2));
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: String(e) };
+        }
+      }
+    }
+    return { ok: false, error: 'worker 不存在' };
+  }
+
   deleteWorker(workerId: string): { ok: boolean; error?: string } {
     const importedPath = path.join(this.userImportedWorkersRoot, workerId);
     if (!fs.existsSync(importedPath)) {
@@ -1460,6 +1497,27 @@ class OpenClawService {
       await this.bootstrapWorkerAgent({ id, name, description, path: destPath, mode: 'agent' }, { forceSkills: true });
       // 清除旧 session 快照，确保下次运行时重新扫描并注册 skills
       this.clearAgentSessionSnapshot(id);
+
+      // 为新导入的 worker 设置默认模型，避免回退到全局 gpt 默认值
+      try {
+        const configPath = path.join(this.userOpenClawHome, '.openclaw', 'openclaw.json');
+        const raw = fs.existsSync(configPath)
+          ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+          : {};
+        raw.agents = raw.agents || {};
+        raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
+        const defaultModel = 'openrouter/xiaomi/mimo-v2-pro';
+        const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === id);
+        if (idx >= 0) {
+          if (!raw.agents.list[idx].model) {
+            raw.agents.list[idx] = { ...raw.agents.list[idx], model: defaultModel };
+          }
+        } else {
+          raw.agents.list.push({ id, model: defaultModel });
+        }
+        fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
+      } catch { /* 写入失败不影响导入结果 */ }
+
       const skills = this.readWorkspaceSkills(id);
       return { ok: true, skills };
     } catch (err: unknown) {
@@ -1613,6 +1671,28 @@ class OpenClawService {
     }
   }
 
+  private get coordinatorConfigPath() {
+    return path.join(app.getPath('userData'), 'coordinator-config.json');
+  }
+
+  getCoordinatorModel(): string {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.coordinatorConfigPath, 'utf8'));
+      return typeof raw?.model === 'string' ? raw.model : '';
+    } catch {
+      return '';
+    }
+  }
+
+  async setCoordinatorModel(model: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      fs.writeFileSync(this.coordinatorConfigPath, JSON.stringify({ model: model.trim() }, null, 2), 'utf8');
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    }
+  }
+
   private getConfiguredModelFull(): string {
     const configPath = path.join(this.userOpenClawHome, '.openclaw', 'openclaw.json');
     try {
@@ -1718,7 +1798,7 @@ class OpenClawService {
     ]);
     const detail = await this.runOpenClaw(['config', 'set', '--batch-json', batchJson]);
 
-    const modelDetail = await this.runOpenClaw(['config', 'set', 'agents.defaults.model', 'openrouter/openai/gpt-5-nano']);
+    const modelDetail = await this.runOpenClaw(['config', 'set', 'agents.defaults.model', 'openrouter/xiaomi/mimo-v2-pro']);
 
     return {
       ok: detail.code === 0 && modelDetail.code === 0,
@@ -1759,6 +1839,18 @@ class OpenClawService {
     );
   }
 
+  openOpenClawDir(): Promise<string> {
+    const dirPath = path.join(this.userOpenClawHome, '.openclaw');
+    fs.mkdirSync(dirPath, { recursive: true });
+    return shell.openPath(dirPath);
+  }
+
+  openWorkerDir(workerId: string): Promise<string> {
+    const dirPath = this.workerAgentWorkspacePath(workerId);
+    fs.mkdirSync(dirPath, { recursive: true });
+    return shell.openPath(dirPath);
+  }
+
   debugInfo() {
     return {
       isDev: this.isDev,
@@ -1774,6 +1866,83 @@ class OpenClawService {
       embeddedNodeExists: fs.existsSync(this.embeddedNodePath),
       openclawCliExists: fs.existsSync(this.openclawCliPath)
     };
+  }
+
+  async coordinatorPlan(
+    userMessage: string,
+    workers: { id: string; name: string; description?: string }[],
+    fileContext?: string
+  ): Promise<string> {
+    const workerList = workers
+      .map((w) => `- id: "${w.id}", name: "${w.name}"${w.description ? `, description: "${w.description}"` : ''}`)
+      .join('\n');
+
+    const systemPrompt = `You are a task coordinator in a group chat. Analyze the user's request and output an execution plan for the available workers.
+
+Available workers:
+${workerList}
+
+Output ONLY valid JSON with no markdown fences or explanation:
+{
+  "analysis": "brief analysis in Chinese describing task breakdown and order",
+  "tasks": [
+    {
+      "id": "t1",
+      "workerId": "worker-id",
+      "message": "specific message to send to this worker in Chinese, include all context needed",
+      "after": []
+    }
+  ]
+}
+
+Rules:
+- "after" lists task IDs that must complete before this task starts; empty = start immediately
+- Only use workerIds from the available workers list
+- CRITICAL: You MUST create exactly one task for EVERY worker listed above. Do not skip any worker, do not merge two workers into one task. Each worker in the list must appear as the "workerId" in at least one task.
+- CRITICAL: Respect the order implied by the user's request. If the user says "A does X then passes to B", A's task must come first (after: []) and B's task must depend on it (after: ["A's task id"]).
+- CRITICAL: NEVER tell any worker to call, invoke, or contact another worker. Workers cannot communicate with each other.
+- Keep each worker's message short and direct — just state the intent. Do NOT add implementation details, file paths, command examples, or how-to instructions. Each worker has its own skills and knows how to handle the task.
+- The orchestration system automatically prepends the output of prior tasks under "前置任务结果：" in the dependent worker's message. For dependent tasks, only say what to do with that output (e.g. "请执行前置任务结果中的Python脚本"), do NOT reproduce or describe it.
+- Do NOT say "ask worker X" or "get the result from worker X".
+- If the user mentions a file, just reference it by name in the task message; the actual file content is injected automatically by the execution layer, do NOT include or reproduce any file content`;
+
+    const userContent = fileContext
+      ? `${userMessage}\n\n[附件内容]\n${fileContext}`
+      : userMessage;
+
+    const coordinatorModel = this.getCoordinatorModel();
+    const openRouterKey = this.getOpenRouterKey();
+
+    let url: string;
+    let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    let model: string;
+
+    if (coordinatorModel && openRouterKey) {
+      url = 'https://openrouter.ai/api/v1/chat/completions';
+      headers['Authorization'] = `Bearer ${openRouterKey}`;
+      model = coordinatorModel;
+    } else {
+      url = `http://127.0.0.1:${this.gatewayPort}/v1/chat/completions`;
+      const gatewayToken = this.getGatewayToken();
+      if (gatewayToken) headers['Authorization'] = `Bearer ${gatewayToken}`;
+      model = 'openclaw';
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`coordinator HTTP ${res.status}`);
+    const json = await res.json() as unknown;
+    return this.extractReplyText(json);
   }
 }
 
@@ -1850,5 +2019,19 @@ ipcMain.handle('workers:delete', (_evt, workerId: string) => service.deleteWorke
 ipcMain.handle('groups:list', () => service.listGroups());
 ipcMain.handle('groups:create', (_evt, name: string, workerIds: string[]) => service.createGroup(name, workerIds));
 ipcMain.handle('groups:delete', (_evt, id: string) => service.deleteGroup(id));
+ipcMain.handle('groups:update', (_evt, id: string, workerIds: string[]) => service.updateGroup(id, workerIds));
+ipcMain.handle('chat:clearWorkerSessions', (_evt, workerIds: string[]) => {
+  (workerIds || []).forEach((id) => service.clearAgentSessionSnapshot(id));
+});
+ipcMain.handle('coordinator:getModel', () => service.getCoordinatorModel());
+ipcMain.handle('coordinator:setModel', async (_evt, model: string) => service.setCoordinatorModel(model));
+ipcMain.handle('coordinator:plan', async (_evt, payload: {
+  userMessage: string;
+  workers: { id: string; name: string; description?: string }[];
+  fileContext?: string;
+}) => service.coordinatorPlan(payload.userMessage, payload.workers, payload.fileContext));
 ipcMain.handle('debug:toggle-devtools', () => { mainWindow?.webContents.toggleDevTools(); });
 ipcMain.handle('debug:open-dashboard', () => { shell.openExternal(`http://127.0.0.1:${service.gatewayPort}`); });
+ipcMain.handle('workers:open-openclaw-dir', () => service.openOpenClawDir());
+ipcMain.handle('workers:open-worker-dir', (_evt, workerId: string) => service.openWorkerDir(workerId));
+ipcMain.handle('workers:update-meta', (_evt, workerId: string, name: string, description: string) => service.updateWorkerMeta(workerId, name, description));
