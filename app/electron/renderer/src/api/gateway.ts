@@ -52,6 +52,7 @@ interface GatewayApi {
   openDashboard: () => Promise<void>;
   workerOpenOpenClawDir: () => Promise<string>;
   workerOpenWorkerDir: (workerId: string) => Promise<string>;
+  workerOpenFileLocation: (workerId: string, filePath: string) => Promise<string>;
   workerUpdateMeta: (workerId: string, name: string, description: string) => Promise<{ ok: boolean; error?: string }>;
   getModel: () => Promise<string>;
   setModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
@@ -105,6 +106,7 @@ export const toggleDevTools = () => api().toggleDevTools();
 export const openDashboard = () => api().openDashboard();
 export const workerOpenOpenClawDir = () => api().workerOpenOpenClawDir();
 export const workerOpenWorkerDir = (workerId: string) => api().workerOpenWorkerDir(workerId);
+export const workerOpenFileLocation = (workerId: string, filePath: string) => api().workerOpenFileLocation(workerId, filePath);
 export const workerUpdateMeta = (workerId: string, name: string, description: string) => api().workerUpdateMeta(workerId, name, description);
 export const getModel = () => api().getModel();
 export const setModel = (model: string) => api().setModel(model);

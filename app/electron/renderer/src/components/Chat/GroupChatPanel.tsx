@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useChatStore } from '../../store/chatStore';
-import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, coordinatorGetModel, coordinatorSetModel } from '../../api/gateway';
+import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, coordinatorGetModel, coordinatorSetModel, workerOpenFileLocation } from '../../api/gateway';
 import type { GroupMessage, WorkerMeta, CoordinatorPlan } from '../../types';
 import styles from './GroupChatPanel.module.css';
 
@@ -44,6 +44,37 @@ function makeId(prefix: string, workerId: string) {
 
 function normalizeNewlines(text: string) {
   return text.replace(/\n{2,}/g, '\n');
+}
+
+const FILE_EXT_RE = /\.(ts|tsx|js|jsx|json|md|txt|py|css|html|htm|yaml|yml|sh|bash|env|toml|xml|csv|sql|go|rs|java|kt|swift|rb|php|c|cpp|h|vue|svelte|lock|log|conf|cfg)$/i;
+
+function looksLikeFilePath(text: string): boolean {
+  if (text.length > 300 || text.includes('\n')) return false;
+  if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) return true;
+  if (FILE_EXT_RE.test(text.trim())) return true;
+  return false;
+}
+
+function makeCodeComponents(workerId?: string) {
+  return {
+    code({ children, className, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
+      const text = String(children).trim();
+      const isBlock = !!className;
+      if (!isBlock && workerId && looksLikeFilePath(text)) {
+        return (
+          <span
+            className={styles.fileLink}
+            onClick={() => void workerOpenFileLocation(workerId, text)}
+            title={`打开目录: ${text}`}
+          >
+            <code className={styles.fileLinkCode}>{children}</code>
+            <span className={styles.fileLinkIcon}>📂</span>
+          </span>
+        );
+      }
+      return <code className={className} {...props}>{children}</code>;
+    },
+  };
 }
 
 
@@ -585,7 +616,7 @@ export function GroupChatPanel() {
               <div className={`${styles.bubble} ${msg.content === '思考中...' ? styles.thinking : ''}`}>
                 {msg.content === '思考中...' ? msg.content : (
                   <div className={styles.markdown}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={makeCodeComponents(msg.workerId)}>
                       {normalizeNewlines(msg.content)}
                     </ReactMarkdown>
                   </div>

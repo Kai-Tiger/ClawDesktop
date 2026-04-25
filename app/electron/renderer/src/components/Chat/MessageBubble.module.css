@@ -182,3 +182,25 @@
   60%  { color: #aaa; }
   100% { color: #aaa; }
 }
+
+.fileLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.fileLinkCode {
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-underline-offset: 2px;
+}
+
+.fileLinkIcon {
+  font-size: 11px;
+  user-select: none;
+  line-height: 1;
+}

@@ -1851,6 +1851,19 @@ class OpenClawService {
     return shell.openPath(dirPath);
   }
 
+  openFileLocation(workerId: string, filePath: string): Promise<string> {
+    const workspacePath = this.workerAgentWorkspacePath(workerId);
+    let targetDir: string;
+    if (path.isAbsolute(filePath)) {
+      targetDir = path.dirname(filePath);
+    } else {
+      const resolved = path.resolve(workspacePath, filePath);
+      targetDir = path.dirname(resolved);
+    }
+    fs.mkdirSync(targetDir, { recursive: true });
+    return shell.openPath(targetDir);
+  }
+
   debugInfo() {
     return {
       isDev: this.isDev,
@@ -2034,4 +2047,5 @@ ipcMain.handle('debug:toggle-devtools', () => { mainWindow?.webContents.toggleDe
 ipcMain.handle('debug:open-dashboard', () => { shell.openExternal(`http://127.0.0.1:${service.gatewayPort}`); });
 ipcMain.handle('workers:open-openclaw-dir', () => service.openOpenClawDir());
 ipcMain.handle('workers:open-worker-dir', (_evt, workerId: string) => service.openWorkerDir(workerId));
+ipcMain.handle('workers:open-file-location', (_evt, workerId: string, filePath: string) => service.openFileLocation(workerId, filePath));
 ipcMain.handle('workers:update-meta', (_evt, workerId: string, name: string, description: string) => service.updateWorkerMeta(workerId, name, description));

@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   openDashboard: () => ipcRenderer.invoke('debug:open-dashboard'),
   workerOpenOpenClawDir: () => ipcRenderer.invoke('workers:open-openclaw-dir'),
   workerOpenWorkerDir: (workerId: string) => ipcRenderer.invoke('workers:open-worker-dir', workerId),
+  workerOpenFileLocation: (workerId: string, filePath: string) => ipcRenderer.invoke('workers:open-file-location', workerId, filePath),
   workerUpdateMeta: (workerId: string, name: string, description: string) => ipcRenderer.invoke('workers:update-meta', workerId, name, description),
   getModel: () => ipcRenderer.invoke('settings:getModel'),
   setModel: (model: string) => ipcRenderer.invoke('settings:setModel', model),

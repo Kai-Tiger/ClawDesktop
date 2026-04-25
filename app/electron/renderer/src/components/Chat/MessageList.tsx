@@ -22,7 +22,7 @@ export function MessageList() {
   return (
     <div className={styles.list}>
       {messages.map((msg, i) => (
-        <MessageBubble key={i} {...msg} workerName={workerName} />
+        <MessageBubble key={i} {...msg} workerName={workerName} workerId={currentWorkerId} />
       ))}
       <div ref={bottomRef} />
     </div>

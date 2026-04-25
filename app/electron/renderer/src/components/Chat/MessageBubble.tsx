@@ -1,10 +1,21 @@
+import React from "react";
 import type { ChatMessage } from "../../types";
 import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { workerOpenFileLocation } from "../../api/gateway";
 import styles from "./MessageBubble.module.css";
 
 const FILE_BLOCK_DISPLAY_LINES = 10;
+
+const FILE_EXT_RE = /\.(ts|tsx|js|jsx|json|md|txt|py|css|html|htm|yaml|yml|sh|bash|env|toml|xml|csv|sql|go|rs|java|kt|swift|rb|php|c|cpp|h|vue|svelte|lock|log|conf|cfg)$/i;
+
+function looksLikeFilePath(text: string): boolean {
+  if (text.length > 300 || text.includes('\n')) return false;
+  if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) return true;
+  if (FILE_EXT_RE.test(text.trim())) return true;
+  return false;
+}
 
 function normalizeNewlines(text: string) {
   return text.replace(/\n{2,}/g, '\n');
@@ -20,6 +31,7 @@ function truncateFileBlocks(text: string): string {
 
 interface MessageBubbleProps extends ChatMessage {
   workerName?: string;
+  workerId?: string;
 }
 
 export function MessageBubble({
@@ -28,11 +40,32 @@ export function MessageBubble({
   timestamp,
   statusLines,
   workerName,
+  workerId,
 }: MessageBubbleProps) {
+  const codeComponents = {
+    code({ children, className, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
+      const text = String(children).trim();
+      const isBlock = !!className;
+      if (!isBlock && workerId && looksLikeFilePath(text)) {
+        return (
+          <span
+            className={styles.fileLink}
+            onClick={() => void workerOpenFileLocation(workerId, text)}
+            title={`打开目录: ${text}`}
+          >
+            <code className={styles.fileLinkCode}>{children}</code>
+            <span className={styles.fileLinkIcon}>📂</span>
+          </span>
+        );
+      }
+      return <code className={className} {...props}>{children}</code>;
+    },
+  };
+
   function renderMarkdown(text: string) {
     return (
       <div className={styles.markdown}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={codeComponents}>
           {normalizeNewlines(text)}
         </ReactMarkdown>
       </div>
