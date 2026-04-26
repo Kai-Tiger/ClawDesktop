@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { chatSend, onChatChunk, onChatStatus } from '../api/gateway';
+import { chatSend, onChatChunk } from '../api/gateway';
 import { useChatStore } from '../store/chatStore';
 import type { ImageInput, MessageContent } from '../types';
 
@@ -10,19 +10,13 @@ export function useChat() {
   const currentWorkerId = useChatStore((s) => s.currentWorkerId);
   const messagesMap = useChatStore((s) => s.messages);
   const sendingMap = useChatStore((s) => s.sending);
-  const { pushMessage, updateLastMessage, appendToLastMessage, addStatusLine, setSending } = useChatStore();
+  const { pushMessage, updateLastMessage, appendToLastMessage, setSending } = useChatStore();
 
   useEffect(() => {
     return onChatChunk(({ workerId, chunk }) => {
       appendToLastMessage(workerId, chunk);
     });
   }, [appendToLastMessage]);
-
-  useEffect(() => {
-    return onChatStatus(({ workerId, status }) => {
-      addStatusLine(workerId, status);
-    });
-  }, [addStatusLine]);
 
   const sending = !!sendingMap[currentWorkerId];
 

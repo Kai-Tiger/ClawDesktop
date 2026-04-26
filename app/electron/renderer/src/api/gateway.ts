@@ -67,7 +67,6 @@ interface GatewayApi {
   coordinatorSetModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
   coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) => Promise<string>;
   onChatChunk: (cb: (data: { workerId: string; chunk: string }) => void) => () => void;
-  onChatStatus: (cb: (data: { workerId: string; status: string }) => void) => () => void;
   onCronMessage?: (cb: (data: { workerId: string; content: string; role: string }) => void) => () => void;
 }
 
@@ -127,7 +126,5 @@ export const coordinatorPlan = (payload: { userMessage: string; workers: { id: s
   api().coordinatorPlan(payload);
 export const onChatChunk = (cb: (data: { workerId: string; chunk: string }) => void) =>
   api().onChatChunk(cb);
-export const onChatStatus = (cb: (data: { workerId: string; status: string }) => void) =>
-  api().onChatStatus(cb);
 export const onCronMessage = (cb: (data: { workerId: string; content: string; role: string }) => void) =>
   api().onCronMessage?.(cb) ?? (() => {});

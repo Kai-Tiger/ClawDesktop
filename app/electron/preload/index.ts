@@ -66,11 +66,6 @@ contextBridge.exposeInMainWorld('gatewayApi', {
     ipcRenderer.on('chat:chunk', handler);
     return () => ipcRenderer.removeListener('chat:chunk', handler);
   },
-  onChatStatus: (cb: (data: { workerId: string; status: string }) => void) => {
-    const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; status: string }) => cb(data);
-    ipcRenderer.on('chat:status', handler);
-    return () => ipcRenderer.removeListener('chat:status', handler);
-  },
   onCronMessage: (cb: (data: { workerId: string; content: string; role: string }) => void) => {
     const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; content: string; role: string }) => cb(data);
     ipcRenderer.on('cron:message', handler);

@@ -38,7 +38,6 @@ export function MessageBubble({
   role,
   content,
   timestamp,
-  statusLines,
   workerName,
   workerId,
   msgId,
@@ -88,12 +87,6 @@ export function MessageBubble({
         <span>{displayName}</span>
         {timeStr && <span className={styles.time}>{timeStr}</span>}
       </div>
-      {/* 注释 statusLine */}
-      {/* <div className={styles.statusLines}>
-        {(statusLines ?? []).map((line, i) => (
-          <div key={i} className={styles.statusLine}>{line}</div>
-        ))}
-      </div> */}
       {typeof content === 'string' ? (
         <div className={`${styles.bubble} ${(content === '思考中…' || content === '思考中...') ? styles.thinking : ''}`}>
           {renderMarkdown(truncateFileBlocks(content))}

@@ -352,19 +352,12 @@ class OpenClawService {
     const localPathOverride = [
       '',
       '## Local Workspace Override (Clawin Desktop)',
-      '',
-      '### YOUR WORKSPACE (read/write allowed)',
-      `- Canonical workspace: ${workspacePath}`,
-      `- Skills directory: ${skillsPath}`,
-      '',
-      '### ABSOLUTE FILE ACCESS RULES — MUST FOLLOW WITHOUT EXCEPTION',
-      `- You MUST only read and write files inside: ${workspacePath}`,
-      `- The parent directory ${parentDir} contains workspaces of OTHER agents. You MUST NOT access, list, read, or write any path inside ${parentDir} except your own workspace above.`,
-      '- NEVER use paths like ~/.openclaw/, ~/. openclaw/workspace-*, or any sibling workspace-* directory.',
-      '- NEVER resolve, glob, or traverse parent directories to discover other workspaces.',
-      '- If a skill name you are asked to edit exists in your skills directory, edit ONLY the copy at your canonical path.',
-      `- Any file operation whose resolved absolute path does not start with "${workspacePath}" is FORBIDDEN.`,
-      '- When in doubt about a file path, refuse the operation and ask the user to clarify.',
+      `- Allowed root: ${workspacePath}`,
+      `- Allowed skills dir: ${skillsPath}`,
+      `- Never access sibling workspaces under ${parentDir}`,
+      '- Never use ~/.openclaw paths or parent-directory traversal to find files.',
+      '- Only operate on absolute paths that start with the allowed root.',
+      '- If path scope is unclear, ask for an explicit absolute path first.',
     ].join('\n');
 
     // agent 定义文件（由 app 管理，始终覆写）
@@ -1123,7 +1116,6 @@ class OpenClawService {
   private chatCliAgent(
     agentId: string,
     message: string,
-    onStatus?: (line: string) => void,
     onLog?: (step: string) => void,
     groupId?: string
   ): Promise<string> {
@@ -1164,7 +1156,6 @@ class OpenClawService {
         const clean = stripAnsi(line).trim();
         if (!clean || clean.startsWith('{') || NOISE.test(clean)) return;
         onLog?.(`[${ms()}] status: ${clean}`);
-        onStatus?.(clean);
       };
 
       child.stdout.on('data', (d: Buffer) => {
@@ -1297,10 +1288,8 @@ class OpenClawService {
 
     if (selected.mode === 'agent') {
       log('CLI-agent start');
-      const win = BrowserWindow.getAllWindows()[0];
       const reply = await this.chatCliAgent(
         selected.id, trimmed,
-        win ? (status) => win.webContents.send('chat:status', { workerId, status }) : undefined,
         (step) => log(`CLI-agent ${step}`),
         groupId
       );

@@ -22,7 +22,6 @@ interface ChatStore {
   pushMessage: (workerId: string, msg: ChatMessage) => void;
   updateLastMessage: (workerId: string, content: string) => void;
   appendToLastMessage: (workerId: string, chunk: string) => void;
-  addStatusLine: (workerId: string, line: string) => void;
   setSending: (workerId: string, value: boolean) => void;
   clearMessages: (workerId: string) => void;
 
@@ -73,15 +72,6 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => {
       const list = [...(state.messages[workerId] ?? [])];
       if (list.length > 0) list[list.length - 1] = { ...list[list.length - 1], content };
-      return { messages: { ...state.messages, [workerId]: list } };
-    }),
-
-  addStatusLine: (workerId, line) =>
-    set((state) => {
-      const list = [...(state.messages[workerId] ?? [])];
-      if (list.length === 0) return {};
-      const last = list[list.length - 1];
-      list[list.length - 1] = { ...last, statusLines: [...(last.statusLines ?? []), line] };
       return { messages: { ...state.messages, [workerId]: list } };
     }),
 
