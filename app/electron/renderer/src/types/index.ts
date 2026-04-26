@@ -16,6 +16,7 @@ export interface ChatMessage {
   content: MessageContent;
   timestamp?: number;
   statusLines?: string[];
+  msgId?: string;
 }
 
 export interface WorkerMeta {
@@ -116,6 +117,7 @@ export interface GroupChannel {
 
 export interface GroupMessage {
   id: string;
+  msgId?: string;
   role: 'user' | 'worker' | 'system' | 'debug';
   workerId?: string;
   workerName?: string;

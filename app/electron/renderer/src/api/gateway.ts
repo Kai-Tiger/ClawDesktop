@@ -30,7 +30,7 @@ interface GatewayApi {
   getOpenRouterKey: () => Promise<string>;
   saveOpenRouterKey: (apiKey: string) => Promise<SaveKeyResult>;
   workersList: () => Promise<WorkerMeta[]>;
-  chatSend: (workerId: string, message: string, images?: ImageInput[], history?: { role: string; content: MessageContent }[]) => Promise<ChatResult>;
+  chatSend: (workerId: string, message: string, images?: ImageInput[], history?: { role: string; content: MessageContent }[], traceId?: string, groupId?: string) => Promise<ChatResult>;
   telegramList: () => Promise<TelegramChannel[]>;
   telegramAdd: (token: string, workerId?: string) => Promise<TelegramAddResult>;
   telegramRemove: (accountId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -48,6 +48,7 @@ interface GatewayApi {
   groupsCreate: (name: string, workerIds: string[]) => Promise<GroupChannel>;
   groupsDelete: (id: string) => Promise<{ ok: boolean }>;
   groupsUpdate: (id: string, workerIds: string[]) => Promise<{ ok: boolean; error?: string }>;
+  openLogsDir: () => Promise<void>;
   toggleDevTools: () => Promise<void>;
   openDashboard: () => Promise<void>;
   workerOpenOpenClawDir: () => Promise<string>;
@@ -61,12 +62,13 @@ interface GatewayApi {
   workerDelete: (workerId: string) => Promise<{ ok: boolean; error?: string }>;
   getChatHistory: () => Promise<ChatHistory>;
   saveHistory: (data: ChatHistory) => void;
-  clearWorkerSessions: (workerIds: string[]) => Promise<void>;
+  clearWorkerSessions: (workerIds: string[], groupId?: string) => Promise<void>;
   coordinatorGetModel: () => Promise<string>;
   coordinatorSetModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
   coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) => Promise<string>;
   onChatChunk: (cb: (data: { workerId: string; chunk: string }) => void) => () => void;
   onChatStatus: (cb: (data: { workerId: string; status: string }) => void) => () => void;
+  onCronMessage?: (cb: (data: { workerId: string; content: string; role: string }) => void) => () => void;
 }
 
 const api = () => (window as unknown as { gatewayApi: GatewayApi }).gatewayApi;
@@ -82,8 +84,10 @@ export const chatSend = (
   workerId: string,
   message: string,
   images?: ImageInput[],
-  history?: { role: string; content: MessageContent }[]
-) => api().chatSend(workerId, message, images, history);
+  history?: { role: string; content: MessageContent }[],
+  traceId?: string,
+  groupId?: string
+) => api().chatSend(workerId, message, images, history, traceId, groupId);
 export const telegramList = () => api().telegramList();
 export const telegramAdd = (token: string, workerId?: string) => api().telegramAdd(token, workerId);
 export const telegramRemove = (accountId: string) => api().telegramRemove(accountId);
@@ -102,6 +106,7 @@ export const groupsList = () => api().groupsList();
 export const groupsCreate = (name: string, workerIds: string[]) => api().groupsCreate(name, workerIds);
 export const groupsDelete = (id: string) => api().groupsDelete(id);
 export const groupsUpdate = (id: string, workerIds: string[]) => api().groupsUpdate(id, workerIds);
+export const openLogsDir = () => api().openLogsDir();
 export const toggleDevTools = () => api().toggleDevTools();
 export const openDashboard = () => api().openDashboard();
 export const workerOpenOpenClawDir = () => api().workerOpenOpenClawDir();
@@ -115,7 +120,7 @@ export const setWorkerModel = (workerId: string, model: string) => api().setWork
 export const workerDelete = (workerId: string) => api().workerDelete(workerId);
 export const getChatHistory = () => api().getChatHistory();
 export const saveHistory = (data: ChatHistory) => api().saveHistory(data);
-export const clearWorkerSessions = (workerIds: string[]) => api().clearWorkerSessions(workerIds);
+export const clearWorkerSessions = (workerIds: string[], groupId?: string) => api().clearWorkerSessions(workerIds, groupId);
 export const coordinatorGetModel = () => api().coordinatorGetModel();
 export const coordinatorSetModel = (model: string) => api().coordinatorSetModel(model);
 export const coordinatorPlan = (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) =>
@@ -124,3 +129,5 @@ export const onChatChunk = (cb: (data: { workerId: string; chunk: string }) => v
   api().onChatChunk(cb);
 export const onChatStatus = (cb: (data: { workerId: string; status: string }) => void) =>
   api().onChatStatus(cb);
+export const onCronMessage = (cb: (data: { workerId: string; content: string; role: string }) => void) =>
+  api().onCronMessage?.(cb) ?? (() => {});

@@ -18,8 +18,10 @@ contextBridge.exposeInMainWorld('gatewayApi', {
     workerId: string,
     message: string,
     images?: { mediaType: string; data: string }[],
-    history?: PreloadMessageItem[]
-  ) => ipcRenderer.invoke('chat:send', { workerId, message, images, history }),
+    history?: PreloadMessageItem[],
+    traceId?: string,
+    groupId?: string
+  ) => ipcRenderer.invoke('chat:send', { workerId, message, images, history, traceId, groupId }),
   telegramList: () => ipcRenderer.invoke('channels:telegram:list'),
   telegramAdd: (token: string, workerId?: string) => ipcRenderer.invoke('channels:telegram:add', token, workerId),
   telegramRemove: (accountId: string) => ipcRenderer.invoke('channels:telegram:remove', accountId),
@@ -40,6 +42,7 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   groupsCreate: (name: string, workerIds: string[]) => ipcRenderer.invoke('groups:create', name, workerIds),
   groupsDelete: (id: string) => ipcRenderer.invoke('groups:delete', id),
   groupsUpdate: (id: string, workerIds: string[]) => ipcRenderer.invoke('groups:update', id, workerIds),
+  openLogsDir: () => ipcRenderer.invoke('logs:openDir'),
   toggleDevTools: () => ipcRenderer.invoke('debug:toggle-devtools'),
   openDashboard: () => ipcRenderer.invoke('debug:open-dashboard'),
   workerOpenOpenClawDir: () => ipcRenderer.invoke('workers:open-openclaw-dir'),
@@ -53,7 +56,7 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   workerDelete: (workerId: string) => ipcRenderer.invoke('workers:delete', workerId),
   getChatHistory: () => ipcRenderer.invoke('chat:getHistory'),
   saveHistory: (data: unknown) => ipcRenderer.send('chat:saveHistory', data),
-  clearWorkerSessions: (workerIds: string[]) => ipcRenderer.invoke('chat:clearWorkerSessions', workerIds),
+  clearWorkerSessions: (workerIds: string[], groupId?: string) => ipcRenderer.invoke('chat:clearWorkerSessions', workerIds, groupId),
   coordinatorGetModel: () => ipcRenderer.invoke('coordinator:getModel'),
   coordinatorSetModel: (model: string) => ipcRenderer.invoke('coordinator:setModel', model),
   coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) =>
@@ -67,5 +70,10 @@ contextBridge.exposeInMainWorld('gatewayApi', {
     const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; status: string }) => cb(data);
     ipcRenderer.on('chat:status', handler);
     return () => ipcRenderer.removeListener('chat:status', handler);
+  },
+  onCronMessage: (cb: (data: { workerId: string; content: string; role: string }) => void) => {
+    const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; content: string; role: string }) => cb(data);
+    ipcRenderer.on('cron:message', handler);
+    return () => ipcRenderer.removeListener('cron:message', handler);
   },
 });

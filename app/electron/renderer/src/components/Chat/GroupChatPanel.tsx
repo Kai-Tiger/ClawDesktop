@@ -3,21 +3,12 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useChatStore } from '../../store/chatStore';
-import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, coordinatorGetModel, coordinatorSetModel, workerOpenFileLocation } from '../../api/gateway';
+import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, workerOpenFileLocation, openLogsDir } from '../../api/gateway';
 import type { GroupMessage, WorkerMeta, CoordinatorPlan } from '../../types';
 import styles from './GroupChatPanel.module.css';
 
 const PALETTE = ['#5b8cff', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-const BUILTIN_MODELS = [
-  { id: 'minimax/minimax-m2.5', label: 'MiniMax M2.5' },
-  { id: 'xiaomi/mimo-v2-pro', label: 'MiMo v2 Pro' },
-  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-  { id: 'openai/gpt-5-nano', label: 'GPT-5 Nano' },
-  { id: 'moonshotai/kimi-k2.6', label: 'Kimi K2.6' },
-  { id: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6' },
-  { id: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
-];
 function workerColor(workerId: string, allIds: string[]) {
   return PALETTE[Math.max(0, allIds.indexOf(workerId)) % PALETTE.length];
 }
@@ -42,6 +33,10 @@ function makeId(prefix: string, workerId: string) {
   return `${prefix}-${Date.now()}-${workerId}-${Math.random().toString(36).slice(2)}`;
 }
 
+function makeMsgId(): string {
+  return Math.random().toString(16).slice(2, 10);
+}
+
 function normalizeNewlines(text: string) {
   return text.replace(/\n{2,}/g, '\n');
 }
@@ -53,6 +48,14 @@ function looksLikeFilePath(text: string): boolean {
   if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) return true;
   if (FILE_EXT_RE.test(text.trim())) return true;
   return false;
+}
+
+function perfLog(traceId: string, step: string, extra?: string) {
+  console.log(`[perf][${traceId}] ${new Date().toISOString()} ${step}${extra ? ' ' + extra : ''}`);
+}
+
+function stripDirectiveTags(text: string): string {
+  return text.replace(/\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+|audio_as_voice)\s*\]\]/gi, '').trim();
 }
 
 function makeCodeComponents(workerId?: string) {
@@ -94,14 +97,10 @@ export function GroupChatPanel() {
   const messages: GroupMessage[] = currentGroupId ? (groupMessages[currentGroupId] ?? []) : [];
 
   const [noTarget, setNoTarget] = useState(false);
-  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [showAddWorker, setShowAddWorker] = useState(false);
-  const [showCoordSettings, setShowCoordSettings] = useState(false);
-  const [coordModel, setCoordModel] = useState('');
-  const [coordModelSaving, setCoordModelSaving] = useState(false);
-  const [coordModelStatus, setCoordModelStatus] = useState('');
   const setGroups = useChatStore((s) => s.setGroups);
   const groups2 = useChatStore((s) => s.groups);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -119,23 +118,6 @@ export function GroupChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    coordinatorGetModel().then(setCoordModel).catch(() => {});
-  }, []);
-
-  const handleSaveCoordModel = async () => {
-    if (coordModelSaving) return;
-    setCoordModelSaving(true);
-    setCoordModelStatus('保存中…');
-    try {
-      const res = await coordinatorSetModel(coordModel);
-      setCoordModelStatus(res.ok ? '已生效' : (res.error ?? '保存失败'));
-    } catch {
-      setCoordModelStatus('保存失败');
-    } finally {
-      setCoordModelSaving(false);
-    }
-  };
 
   const buildHistory = (gid: string) =>
     (useChatStore.getState().groupMessages[gid] ?? [])
@@ -151,8 +133,9 @@ export function GroupChatPanel() {
     worker: WorkerMeta;
     text: string;
     placeholderId: string;
+    msgId: string;
   }) => {
-    const { gid, groupName, worker, text, placeholderId } = params;
+    const { gid, groupName, worker, text, placeholderId, msgId } = params;
     const key = `${gid}:${worker.id}`;
     const workerLabel = worker.name || worker.id;
     const prior = chains.current.get(key) ?? Promise.resolve();
@@ -163,9 +146,13 @@ export function GroupChatPanel() {
       const history = buildHistory(gid);
 
       try {
-        const result = await chatSend(worker.id, text, undefined, history);
-        useChatStore.getState().updateGroupMessage(gid, placeholderId, result.reply);
-        console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel}: ${result.reply}`);
+        const t0 = Date.now();
+        perfLog(msgId, 'IPC-send', `worker=${worker.id} msgLen=${text.length} historyLen=${history.length}`);
+        const result = await chatSend(worker.id, text, undefined, history, msgId, gid);
+        const reply = stripDirectiveTags(result.reply);
+        perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${reply.length}`);
+        useChatStore.getState().updateGroupMessage(gid, placeholderId, reply);
+        console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel}: ${reply}`);
       } catch (err) {
         useChatStore.getState().updateGroupMessage(gid, placeholderId, '(发送失败)');
         console.error(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel} 失败:`, err);
@@ -294,8 +281,10 @@ export function GroupChatPanel() {
             }
 
             const pid = makeId('w', worker.id);
+            const msgId = makeMsgId();
             addGroupMessage(gid, {
               id: pid,
+              msgId,
               role: 'worker',
               workerId: worker.id,
               workerName: worker.name || worker.id,
@@ -304,9 +293,13 @@ export function GroupChatPanel() {
 
             try {
               const history = buildHistory(gid);
-              const result = await chatSend(worker.id, fullMessage, undefined, history);
-              results.set(task.id, result.reply);
-              useChatStore.getState().updateGroupMessage(gid, pid, result.reply);
+              const t0 = Date.now();
+              perfLog(msgId, 'IPC-send', `task=${task.id} worker=${worker.id} msgLen=${fullMessage.length} historyLen=${history.length}`);
+              const result = await chatSend(worker.id, fullMessage, undefined, history, msgId, gid);
+              const reply = stripDirectiveTags(result.reply);
+              perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${reply.length}`);
+              results.set(task.id, reply);
+              useChatStore.getState().updateGroupMessage(gid, pid, reply);
             } catch {
               useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)');
             }
@@ -315,27 +308,27 @@ export function GroupChatPanel() {
       }
     } finally {
       setPipelineRunning(false);
-      setCsvFile(null);
+      setAttachedFile(null);
     }
   };
 
   const handleSend = () => {
     const text = inputRef.current?.value.trim() ?? '';
     if (!currentGroupId || !group) return;
-    if (!text && !csvFile) return;
+    if (!text && !attachedFile) return;
 
     const targets = parseMentionedWorkers(text, groupWorkers);
 
     // 协作者模式：CSV + @mention 2+ workers
-    if (csvFile && targets.length >= 2) {
+    if (attachedFile && targets.length >= 2) {
       inputRef.current!.value = '';
       addGroupMessage(currentGroupId, {
         id: makeId('u', 'user'),
         role: 'user',
-        content: `${text}\n[CSV: ${csvFile.name}]`,
+        content: `${text}\n[文件: ${attachedFile.name}]`,
       });
-      const file = csvFile;
-      setCsvFile(null);
+      const file = attachedFile;
+      setAttachedFile(null);
       new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target?.result as string);
@@ -350,7 +343,7 @@ export function GroupChatPanel() {
     }
 
     // 协作者模式：无 CSV + @mention 2+ workers
-    if (!csvFile && targets.length >= 2) {
+    if (!attachedFile && targets.length >= 2) {
       inputRef.current!.value = '';
       addGroupMessage(currentGroupId, {
         id: makeId('u', 'user'),
@@ -362,17 +355,17 @@ export function GroupChatPanel() {
     }
 
     // 单 worker 模式：CSV + @mention 一个 worker，整体发送
-    if (csvFile && targets.length === 1) {
+    if (attachedFile && targets.length === 1) {
       inputRef.current!.value = '';
       const [worker] = targets;
       const gid = currentGroupId;
-      const file = csvFile;
+      const file = attachedFile;
       addGroupMessage(gid, {
         id: makeId('u', 'user'),
         role: 'user',
-        content: `${text}\n[CSV: ${file.name}]`,
+        content: `${text}\n[文件: ${file.name}]`,
       });
-      setCsvFile(null);
+      setAttachedFile(null);
       new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target?.result as string);
@@ -380,8 +373,10 @@ export function GroupChatPanel() {
         reader.readAsText(file);
       }).then((csvText) => {
         const pid = makeId('w', worker.id);
+        const msgId = makeMsgId();
         addGroupMessage(gid, {
           id: pid,
+          msgId,
           role: 'worker',
           workerId: worker.id,
           workerName: worker.name || worker.id,
@@ -389,8 +384,12 @@ export function GroupChatPanel() {
         });
         const history = buildHistory(gid);
         const prompt = text ? `${text}\n\n以下是文件内容：\n${csvText}` : csvText;
-        return chatSend(worker.id, prompt, undefined, history).then((result) => {
-          useChatStore.getState().updateGroupMessage(gid, pid, result.reply);
+        const t0 = Date.now();
+        perfLog(msgId, 'IPC-send', `worker=${worker.id} msgLen=${prompt.length} historyLen=${history.length}`);
+        return chatSend(worker.id, prompt, undefined, history, msgId, gid).then((result) => {
+          const reply = stripDirectiveTags(result.reply);
+          perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${reply.length}`);
+          useChatStore.getState().updateGroupMessage(gid, pid, reply);
         }).catch(() => {
           useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)');
         });
@@ -399,7 +398,7 @@ export function GroupChatPanel() {
     }
 
     // CSV 有附件但没有 @mention
-    if (csvFile && targets.length === 0) {
+    if (attachedFile && targets.length === 0) {
       setNoTarget(true);
       setTimeout(() => setNoTarget(false), 2500);
       return;
@@ -429,15 +428,17 @@ export function GroupChatPanel() {
 
     targets.forEach((worker) => {
       const placeholderId = makeId('w', worker.id);
+      const msgId = makeMsgId();
       addGroupMessage(gid, {
         id: placeholderId,
+        msgId,
         role: 'worker',
         workerId: worker.id,
         workerName: worker.name || worker.id,
         content: '思考中...',
       });
-      console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] → ${worker.name || worker.id} (已入队)`);
-      enqueue({ gid, groupName, worker, text, placeholderId });
+      console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] → ${worker.name || worker.id} (已入队) msgId=${msgId}`);
+      enqueue({ gid, groupName, worker, text, placeholderId, msgId });
     });
   };
 
@@ -448,7 +449,7 @@ export function GroupChatPanel() {
   const handleClear = () => {
     if (!currentGroupId) return;
     clearGroupMessages(currentGroupId);
-    clearWorkerSessions(groupWorkers.map((w) => w.id)).catch(console.error);
+    clearWorkerSessions(groupWorkers.map((w) => w.id), currentGroupId).catch(console.error);
   };
 
   const handleAddWorker = async (workerId: string) => {
@@ -487,7 +488,7 @@ export function GroupChatPanel() {
   const workerIds = group.workerIds;
 
   return (
-    <div className={styles.panel} onClick={() => { if (showAddWorker) setShowAddWorker(false); if (showCoordSettings) setShowCoordSettings(false); }}>
+    <div className={styles.panel} onClick={() => { if (showAddWorker) setShowAddWorker(false); }}>
       <div className={styles.header}>
         <span className={styles.title}>Group</span>
         <span className={styles.groupName}>{group.name}</span>
@@ -532,51 +533,19 @@ export function GroupChatPanel() {
             </div>
           )}
         </div>
-        <div className={styles.addWorkerWrap}>
-          <button
-            className={styles.debugToggle}
-            onClick={() => { setShowCoordSettings((v) => !v); setCoordModelStatus(''); }}
-            title="协调者模型设置"
-          >
-            协调者
-          </button>
-          {showCoordSettings && (
-            <div className={styles.addWorkerDropdown} style={{ minWidth: 260 }} onClick={(e) => e.stopPropagation()}>
-              <div className={styles.addWorkerTitle}>协调者模型</div>
-              <div style={{ padding: '4px 12px 8px' }}>
-                <select
-                  style={{ width: '100%', padding: '4px 6px', fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', marginBottom: 6 }}
-                  value={coordModel}
-                  onChange={(e) => { setCoordModel(e.target.value); setCoordModelStatus(''); }}
-                >
-                  <option value="">— 使用默认模型 —</option>
-                  {BUILTIN_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </select>
-                <button
-                  className={styles.sendBtn}
-                  style={{ width: '100%', padding: '5px 0', fontSize: 12 }}
-                  onClick={handleSaveCoordModel}
-                  disabled={coordModelSaving}
-                >
-                  {coordModelSaving ? '保存中…' : '保存'}
-                </button>
-                {coordModelStatus && (
-                  <div style={{ marginTop: 6, fontSize: 11, color: coordModelStatus === '已生效' ? '#22c55e' : '#ef4444' }}>
-                    {coordModelStatus}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
         <button
           className={`${styles.debugToggle} ${debugMode ? styles.debugToggleOn : ''}`}
           onClick={() => setDebugMode((v) => !v)}
           title="调试模式：显示协作者分析和发送给各 worker 的消息"
         >
           调试
+        </button>
+        <button
+          className={styles.debugToggle}
+          onClick={() => void openLogsDir()}
+          title="打开日志文件夹（chat-YYYY-MM-DD.log）"
+        >
+          日志
         </button>
       </div>
 
@@ -621,6 +590,9 @@ export function GroupChatPanel() {
                     </ReactMarkdown>
                   </div>
                 )}
+                {msg.role === 'worker' && msg.msgId && (
+                  <div className={styles.msgIdTag}>{msg.msgId}</div>
+                )}
               </div>
             </div>
           )
@@ -653,13 +625,13 @@ export function GroupChatPanel() {
         </div>
         {noTarget && (
           <div className={styles.noTarget}>
-            {csvFile ? '上传 CSV 后需要 @mention 至少一个 worker' : '请用 @worker名 来指定消息接收者'}
+            {attachedFile ? '上传文件后需要 @mention 至少一个 worker' : '请用 @worker名 来指定消息接收者'}
           </div>
         )}
-        {csvFile && (
+        {attachedFile && (
           <div className={styles.csvChip}>
-            <span>📄 {csvFile.name}</span>
-            <button className={styles.csvChipRemove} onClick={() => setCsvFile(null)}>×</button>
+            <span>📄 {attachedFile.name}</span>
+            <button className={styles.csvChipRemove} onClick={() => setAttachedFile(null)}>×</button>
           </div>
         )}
         <div className={styles.inputRow}>
@@ -673,17 +645,17 @@ export function GroupChatPanel() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".csv"
+            accept=".csv,.txt,.md"
             style={{ display: 'none' }}
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) setCsvFile(f);
+              if (f) setAttachedFile(f);
               e.target.value = '';
             }}
           />
           <button
             className={styles.attachBtn}
-            title="上传 CSV"
+            title="上传文件 (csv/txt/md)"
             disabled={pipelineRunning}
             onClick={() => fileInputRef.current?.click()}
           >

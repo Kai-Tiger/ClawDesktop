@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { createPublicKey, createPrivateKey, sign as cryptoSign } from 'node:crypto';
 
 type ExecResult = { code: number | null; stdout: string; stderr: string; cmd: string };
 type GatewayStatus = {
@@ -31,10 +32,20 @@ type MessageContent = string | MessageContentBlock[];
 type MessageItem = { role: string; content: MessageContent };
 type GroupData = { id: string; name: string; workerIds: string[] };
 
+interface WsInstance {
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  send(data: string): void;
+  close(): void;
+}
+
 class OpenClawService {
   private readonly runtimeVersion = '0.2.0';
+  private readonly agentSessionEpoch = new Map<string, number>();
+  private readonly agentGroupSessionEpoch = new Map<string, number>();
   private gatewayProcess: ChildProcess | null = null;
   gatewayPort = 18789;
+  private wsClient: WsInstance | null = null;
+  private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   private get isDev() {
     return !app.isPackaged;
@@ -461,12 +472,20 @@ class OpenClawService {
 
   /** 清除指定 agent 的 session 快照，强制下次运行时重新发现 skills */
   clearAgentSessionSnapshot(agentId: string): void {
-    const sessionsJson = path.join(
-      this.userOpenClawHome, '.openclaw', 'agents', agentId, 'sessions', 'sessions.json'
+    const sessionsDir = path.join(
+      this.userOpenClawHome, '.openclaw', 'agents', agentId, 'sessions'
     );
-    if (fs.existsSync(sessionsJson)) {
-      fs.writeFileSync(sessionsJson, '{}', 'utf8');
+    const sessionsJson = path.join(sessionsDir, 'sessions.json');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(sessionsJson, '{}', 'utf8');
+    for (const entry of fs.readdirSync(sessionsDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.match(/\.jsonl(\..+)?$/)) continue;
+      try {
+        fs.rmSync(path.join(sessionsDir, entry.name), { force: true });
+      } catch { /* ignore */ }
     }
+    this.agentSessionEpoch.set(agentId, (this.agentSessionEpoch.get(agentId) ?? 0) + 1);
   }
 
   /** 清除所有 agent 的会话快照，强制下次按最新配置建会话 */
@@ -475,10 +494,7 @@ class OpenClawService {
     if (!fs.existsSync(agentsRoot)) return;
     for (const entry of fs.readdirSync(agentsRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const sessionsJson = path.join(agentsRoot, entry.name, 'sessions', 'sessions.json');
-      if (fs.existsSync(sessionsJson)) {
-        fs.writeFileSync(sessionsJson, '{}', 'utf8');
-      }
+      this.clearAgentSessionSnapshot(entry.name);
     }
   }
 
@@ -680,10 +696,137 @@ class OpenClawService {
     if (!this.gatewayProcess) {
       return { ok: false, message: 'Gateway 未运行' };
     }
+    this.stopGatewayWsClient();
     this.gatewayProcess.kill('SIGTERM');
     this.gatewayProcess = null;
     return { ok: true, message: 'Gateway 已停止' };
   }
+
+  // ── Gateway WebSocket client (receives cron/agent push messages) ──────────
+
+  startGatewayWsClient(): void {
+    if (this.wsClient) return;
+    this.connectGatewayWs();
+  }
+
+  stopGatewayWsClient(): void {
+    if (this.wsReconnectTimer) { clearTimeout(this.wsReconnectTimer); this.wsReconnectTimer = null; }
+    if (this.wsClient) { try { this.wsClient.close(); } catch { /* ignore */ } this.wsClient = null; }
+  }
+
+  private connectGatewayWs(): void {
+    const identity = this.loadDeviceIdentity();
+    if (!identity) { console.warn('[gateway-ws] no device identity, skipping WS client'); return; }
+
+    const wsPath = path.join(this.resourcesRuntime, 'openclaw', 'node_modules', 'ws');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const WS = require(wsPath) as { new(url: string, opts?: object): WsInstance };
+    const wsUrl = `ws://127.0.0.1:${this.gatewayPort}`;
+    let ws: WsInstance;
+    try {
+      ws = new WS(wsUrl, { headers: { Origin: `http://127.0.0.1:${this.gatewayPort}` } });
+    } catch (err) {
+      console.error('[gateway-ws] failed to create WS:', err);
+      return;
+    }
+    this.wsClient = ws;
+    let msgId = 1;
+    let connected = false;
+
+    ws.on('message', (data: unknown) => {
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(String(data)) as Record<string, unknown>; } catch { return; }
+
+      if (parsed.event === 'connect.challenge') {
+        const nonce = (parsed.payload as Record<string, unknown>)?.nonce as string | undefined;
+        if (!nonce) return;
+        const signedAtMs = Date.now();
+        const role = 'operator';
+        const scopes = ['operator.admin'];
+        const clientId = 'webchat-ui';
+        const clientMode = 'webchat';
+        const payload = this.buildDevicePayloadV3({ deviceId: identity.deviceId, clientId, clientMode, role, scopes, signedAtMs, nonce });
+        try {
+          ws.send(JSON.stringify({
+            type: 'req', id: String(msgId++), method: 'connect',
+            params: {
+              minProtocol: 3, maxProtocol: 3,
+              client: { id: clientId, version: this.runtimeVersion, platform: process.platform, mode: clientMode },
+              caps: [], role, scopes,
+              device: {
+                id: identity.deviceId,
+                publicKey: this.wsBase64Url(this.wsPublicKeyRaw(identity.publicKeyPem)),
+                signature: this.wsSign(identity.privateKeyPem, payload),
+                signedAt: signedAtMs, nonce
+              }
+            }
+          }));
+        } catch (err) { console.error('[gateway-ws] send connect error:', err); }
+        return;
+      }
+
+      if (parsed.type === 'res' && parsed.ok === true) { connected = true; return; }
+
+      if (parsed.event === 'cron' && connected) {
+        const p = parsed.payload as Record<string, unknown> | undefined;
+        if (!p || p.action !== 'finished' || p.status !== 'ok') return;
+        const sessionKey = p.sessionKey as string | undefined;
+        const summary = p.summary as string | undefined;
+        if (!sessionKey || !summary) return;
+        const m = /^agent:([^:]+):/.exec(sessionKey);
+        const agentId = m?.[1];
+        if (!agentId) return;
+        const win = BrowserWindow.getAllWindows()[0];
+        win?.webContents.send('cron:message', { workerId: agentId, content: summary, role: 'assistant' });
+      }
+    });
+
+    ws.on('error', (err: unknown) => {
+      console.error('[gateway-ws] error:', (err as Error)?.message ?? err);
+    });
+
+    ws.on('close', () => {
+      connected = false;
+      // Only reconnect on unexpected close (wsClient still points to this ws).
+      // If stopGatewayWsClient() was called first it nulls wsClient before close fires.
+      if (this.wsClient === ws) {
+        this.wsClient = null;
+        if (this.gatewayProcess) {
+          this.wsReconnectTimer = setTimeout(() => { this.wsReconnectTimer = null; this.connectGatewayWs(); }, 5000);
+        }
+      }
+    });
+  }
+
+  private loadDeviceIdentity(): { deviceId: string; privateKeyPem: string; publicKeyPem: string } | null {
+    const p = path.join(this.userOpenClawHome, '.openclaw', 'identity', 'device.json');
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
+  }
+
+  private wsBase64Url(buf: Buffer): string {
+    return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  private wsPublicKeyRaw(publicKeyPem: string): Buffer {
+    const key = createPublicKey(publicKeyPem);
+    const der = key.export({ type: 'spki', format: 'der' }) as Buffer;
+    return der.subarray(-32);
+  }
+
+  private wsSign(privateKeyPem: string, payload: string): string {
+    const key = createPrivateKey(privateKeyPem);
+    return this.wsBase64Url(cryptoSign(null, Buffer.from(payload, 'utf8'), key) as Buffer);
+  }
+
+  private buildDevicePayloadV3(p: {
+    deviceId: string; clientId: string; clientMode: string;
+    role: string; scopes: string[]; signedAtMs: number; nonce: string;
+  }): string {
+    return ['v3', p.deviceId, p.clientId, p.clientMode, p.role,
+      p.scopes.join(','), String(p.signedAtMs), '', p.nonce, 'darwin', ''].join('|');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   private readWorkersFromDir(root: string): WorkerMeta[] {
     if (!fs.existsSync(root)) return [];
@@ -772,11 +915,22 @@ class OpenClawService {
     return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
   }
 
-  private getDesktopSessionId(agentId: string): string {
+  private getDesktopSessionId(agentId: string, groupId?: string): string {
     const model = this.getModel() || 'default';
     const safeModel = model.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 64);
     const safeAgent = (agentId || 'agent').replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 64);
-    return `desktop-ui-${safeAgent}-${safeModel}`;
+    if (groupId) {
+      const safeGroup = groupId.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 32);
+      const epoch = this.agentGroupSessionEpoch.get(`${agentId}:${groupId}`) ?? 0;
+      return `desktop-ui-${safeAgent}-${safeModel}-g${safeGroup}-e${epoch}`;
+    }
+    const epoch = this.agentSessionEpoch.get(agentId) ?? 0;
+    return `desktop-ui-${safeAgent}-${safeModel}-e${epoch}`;
+  }
+
+  clearGroupSession(agentId: string, groupId: string): void {
+    const key = `${agentId}:${groupId}`;
+    this.agentGroupSessionEpoch.set(key, (this.agentGroupSessionEpoch.get(key) ?? 0) + 1);
   }
 
   private toOpenAIContent(content: MessageContent): string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> {
@@ -970,11 +1124,12 @@ class OpenClawService {
     agentId: string,
     message: string,
     onStatus?: (line: string) => void,
-    onLog?: (step: string) => void
+    onLog?: (step: string) => void,
+    groupId?: string
   ): Promise<string> {
     return new Promise((resolve) => {
       const agentWorkspace = this.workerAgentWorkspacePath(agentId);
-      const sessionId = this.getDesktopSessionId(agentId);
+      const sessionId = this.getDesktopSessionId(agentId, groupId);
       const args = ['agent', '--agent', agentId, '--session-id', sessionId, '--message', message, '--json'];
 
       const child = spawn(this.embeddedNodePath, [this.openclawCliPath, ...args], {
@@ -1073,10 +1228,10 @@ class OpenClawService {
     });
   }
 
-  async chat(workerId: string, message: string, images?: ImageInput[], history?: MessageItem[]): Promise<ChatResult> {
+  async chat(workerId: string, message: string, images?: ImageInput[], history?: MessageItem[], traceId?: string, groupId?: string): Promise<ChatResult> {
     const t0 = Date.now();
     const ms = () => `+${Date.now() - t0}ms`;
-    const tag = `[chat:${workerId}]`;
+    const tag = traceId ? `[chat:${workerId}][${traceId}]` : `[chat:${workerId}]`;
     const log = (step: string) => this.writeChatLog(`${tag} ${ms().padEnd(8)} ${step}`);
 
     const trimmed = (message || '').trim();
@@ -1146,7 +1301,8 @@ class OpenClawService {
       const reply = await this.chatCliAgent(
         selected.id, trimmed,
         win ? (status) => win.webContents.send('chat:status', { workerId, status }) : undefined,
-        (step) => log(`CLI-agent ${step}`)
+        (step) => log(`CLI-agent ${step}`),
+        groupId
       );
       log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
       return { code: 0, stdout: reply, stderr: '', cmd: `openclaw agent --agent ${selected.id}`, reply };
@@ -1165,7 +1321,7 @@ class OpenClawService {
     // CLI fallback（仅在 HTTP 失败时使用）
     log('CLI-fallback start');
     const agentWorkspace = this.workerAgentWorkspacePath(selected.id);
-    const sessionId = this.getDesktopSessionId(selected.id);
+    const sessionId = this.getDesktopSessionId(selected.id, groupId);
     const res = await this.runOpenClaw(
       ['agent', '--agent', selected.id, '--session-id', sessionId, '--message', trimmed, '--json'],
       { cwd: agentWorkspace }
@@ -1917,23 +2073,23 @@ Rules:
 - Keep each worker's message short and direct — just state the intent. Do NOT add implementation details, file paths, command examples, or how-to instructions. Each worker has its own skills and knows how to handle the task.
 - The orchestration system automatically prepends the output of prior tasks under "前置任务结果：" in the dependent worker's message. For dependent tasks, only say what to do with that output (e.g. "请执行前置任务结果中的Python脚本"), do NOT reproduce or describe it.
 - Do NOT say "ask worker X" or "get the result from worker X".
-- If the user mentions a file, just reference it by name in the task message; the actual file content is injected automatically by the execution layer, do NOT include or reproduce any file content`;
+- If the user mentions a file, just reference it by name in the task message; the actual file content is injected automatically by the execution layer, do NOT include or reproduce any file content
+- CRITICAL: Whenever a task message involves any file path (input, output, or intermediate), instruct the worker to use and output ABSOLUTE paths only. Never use relative paths like ./foo or ../bar`;
 
     const userContent = fileContext
       ? `${userMessage}\n\n[附件内容]\n${fileContext}`
       : userMessage;
 
-    const coordinatorModel = this.getCoordinatorModel();
     const openRouterKey = this.getOpenRouterKey();
 
     let url: string;
     let headers: Record<string, string> = { 'Content-Type': 'application/json' };
     let model: string;
 
-    if (coordinatorModel && openRouterKey) {
+    if (openRouterKey) {
       url = 'https://openrouter.ai/api/v1/chat/completions';
       headers['Authorization'] = `Bearer ${openRouterKey}`;
-      model = coordinatorModel;
+      model = 'anthropic/claude-sonnet-4.6';
     } else {
       url = `http://127.0.0.1:${this.gatewayPort}/v1/chat/completions`;
       const gatewayToken = this.getGatewayToken();
@@ -1941,6 +2097,12 @@ Rules:
       model = 'openclaw';
     }
 
+    const coordT0 = Date.now();
+    const coordMs = () => `+${Date.now() - coordT0}ms`;
+    this.writeChatLog(`[coordinator] START model=${model} workers=${workers.map((w) => w.id).join(',')} msgLen=${userMessage.length} hasFile=${!!fileContext}`);
+
+    const fetchT = Date.now();
+    this.writeChatLog(`[coordinator] fetch → POST ${url}`);
     const res = await fetch(url, {
       method: 'POST',
       headers,
@@ -1952,16 +2114,22 @@ Rules:
         ],
       }),
     });
+    this.writeChatLog(`[coordinator] fetch ← ${res.status} (${Date.now() - fetchT}ms)`);
 
-    if (!res.ok) throw new Error(`coordinator HTTP ${res.status}`);
+    if (!res.ok) {
+      this.writeChatLog(`[coordinator] FAIL HTTP ${res.status} total=${coordMs()}`);
+      throw new Error(`coordinator HTTP ${res.status}`);
+    }
     const json = await res.json() as unknown;
-    return this.extractReplyText(json);
+    const reply = this.extractReplyText(json);
+    this.writeChatLog(`[coordinator] DONE replyLen=${reply.length} total=${coordMs()}`);
+    return reply;
   }
 }
 
 const service = new OpenClawService();
 
-app.on('before-quit', () => service.stopGateway());
+app.on('before-quit', () => { service.stopGatewayWsClient(); service.stopGateway(); });
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -1989,7 +2157,9 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('[bootstrap failed]', error);
   }
-  service.startGateway().catch((err) => console.error('[auto-start gateway failed]', err));
+  service.startGateway()
+    .then(() => { setTimeout(() => service.startGatewayWsClient(), 3000); })
+    .catch((err) => console.error('[auto-start gateway failed]', err));
   createWindow();
 });
 
@@ -2007,8 +2177,8 @@ ipcMain.handle('workers:list', async () => service.listWorkers());
 ipcMain.handle('channels:telegram:list', async () => service.listTelegramChannels());
 ipcMain.handle('channels:telegram:add', async (_evt, token: string, workerId?: string) => service.addTelegramChannel(token, workerId));
 ipcMain.handle('channels:telegram:remove', async (_evt, accountId: string) => service.removeTelegramChannel(accountId));
-ipcMain.handle('chat:send', async (_evt, payload: { workerId: string; message: string; images?: ImageInput[]; history?: MessageItem[] }) => {
-  return service.chat(payload?.workerId || '', payload?.message || '', payload?.images, payload?.history);
+ipcMain.handle('chat:send', async (_evt, payload: { workerId: string; message: string; images?: ImageInput[]; history?: MessageItem[]; traceId?: string; groupId?: string }) => {
+  return service.chat(payload?.workerId || '', payload?.message || '', payload?.images, payload?.history, payload?.traceId, payload?.groupId);
 });
 ipcMain.handle('chat:getHistory', () => service.getChatHistory());
 ipcMain.on('chat:saveHistory', (_evt, data) => service.saveChatHistory(data));
@@ -2033,8 +2203,15 @@ ipcMain.handle('groups:list', () => service.listGroups());
 ipcMain.handle('groups:create', (_evt, name: string, workerIds: string[]) => service.createGroup(name, workerIds));
 ipcMain.handle('groups:delete', (_evt, id: string) => service.deleteGroup(id));
 ipcMain.handle('groups:update', (_evt, id: string, workerIds: string[]) => service.updateGroup(id, workerIds));
-ipcMain.handle('chat:clearWorkerSessions', (_evt, workerIds: string[]) => {
-  (workerIds || []).forEach((id) => service.clearAgentSessionSnapshot(id));
+ipcMain.handle('chat:clearWorkerSessions', (_evt, workerIds: string[], groupId?: string) => {
+  if (groupId) {
+    (workerIds || []).forEach((id) => {
+      service.clearGroupSession(id, groupId);
+      service.clearAgentSessionSnapshot(id);
+    });
+  } else {
+    (workerIds || []).forEach((id) => service.clearAgentSessionSnapshot(id));
+  }
 });
 ipcMain.handle('coordinator:getModel', () => service.getCoordinatorModel());
 ipcMain.handle('coordinator:setModel', async (_evt, model: string) => service.setCoordinatorModel(model));
@@ -2043,6 +2220,7 @@ ipcMain.handle('coordinator:plan', async (_evt, payload: {
   workers: { id: string; name: string; description?: string }[];
   fileContext?: string;
 }) => service.coordinatorPlan(payload.userMessage, payload.workers, payload.fileContext));
+ipcMain.handle('logs:openDir', () => shell.openPath(path.join(app.getPath('userData'), 'runtime', 'logs')));
 ipcMain.handle('debug:toggle-devtools', () => { mainWindow?.webContents.toggleDevTools(); });
 ipcMain.handle('debug:open-dashboard', () => { shell.openExternal(`http://127.0.0.1:${service.gatewayPort}`); });
 ipcMain.handle('workers:open-openclaw-dir', () => service.openOpenClawDir());

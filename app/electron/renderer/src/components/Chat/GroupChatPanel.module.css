@@ -112,6 +112,14 @@
   border-bottom-left-radius: 4px;
 }
 
+.msgIdTag {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #b0b0b0;
+  font-family: monospace;
+  user-select: all;
+}
+
 .thinking {
   font-style: italic;
   animation: shimmer 1.6s infinite linear;

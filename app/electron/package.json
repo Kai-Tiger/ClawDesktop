@@ -14,7 +14,10 @@
     "build:renderer": "vite build",
     "dist:mac": "electron-builder --mac dmg",
     "dist:mac:zip": "electron-builder --mac zip",
+    "dist:mac:x64": "electron-builder --mac dmg --x64 --config electron-builder-x64.yml",
+    "dist:mac:x64:zip": "electron-builder --mac zip --x64 --config electron-builder-x64.yml",
     "mac": "rm -rf dist/renderer && npm run build && npm run dist:mac:zip",
+    "mac:x64": "rm -rf dist/renderer && npm run build && npm run dist:mac:x64:zip",
     "dist:mac:dir": "electron-builder --mac dir"
   },
   "dependencies": {

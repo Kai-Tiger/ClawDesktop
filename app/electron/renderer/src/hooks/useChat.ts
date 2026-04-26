@@ -48,10 +48,11 @@ export function useChat() {
             ...picked.map((img) => ({ type: 'image' as const, mediaType: img.mediaType, data: img.data })),
           ],
     });
-    pushMessage(workerId, { role: 'assistant', content: '思考中…' });
+    const msgId = Math.random().toString(16).slice(2, 10);
+    pushMessage(workerId, { role: 'assistant', content: '思考中…', msgId });
 
     try {
-      const res = await chatSend(workerId, trimmed, picked, history);
+      const res = await chatSend(workerId, trimmed, picked, history, msgId);
       updateLastMessage(workerId, res.reply || '(无回复)');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

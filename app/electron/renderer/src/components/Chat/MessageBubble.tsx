@@ -41,6 +41,7 @@ export function MessageBubble({
   statusLines,
   workerName,
   workerId,
+  msgId,
 }: MessageBubbleProps) {
   const codeComponents = {
     code({ children, className, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
@@ -96,6 +97,9 @@ export function MessageBubble({
       {typeof content === 'string' ? (
         <div className={`${styles.bubble} ${(content === '思考中…' || content === '思考中...') ? styles.thinking : ''}`}>
           {renderMarkdown(truncateFileBlocks(content))}
+          {role === 'assistant' && msgId && (
+            <div className={styles.msgIdTag}>{msgId}</div>
+          )}
         </div>
       ) : (
         <div className={styles.multiBlocks}>
@@ -116,6 +120,9 @@ export function MessageBubble({
               />
             );
           })}
+          {role === 'assistant' && msgId && (
+            <div className={styles.msgIdTag}>{msgId}</div>
+          )}
         </div>
       )}
     </div>

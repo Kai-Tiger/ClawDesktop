@@ -13,6 +13,7 @@ import {
   workerInstallSkillFromDir,
   workerOpenWorkerDir,
   workerUpdateMeta,
+  clearWorkerSessions,
 } from "../../api/gateway";
 import type { WorkerZipProbe, SkillMeta } from "../../types";
 import { ImportWorkerDialog } from "./ImportWorkerDialog";
@@ -48,7 +49,9 @@ export function WorkerList({
   const [installingSkillWorkerId, setInstallingSkillWorkerId] = useState<
     string | null
   >(null);
-  const [activeSkillTooltip, setActiveSkillTooltip] = useState<string | null>(null);
+  const [activeSkillTooltip, setActiveSkillTooltip] = useState<string | null>(
+    null,
+  );
   const skillTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeWorkerMenu, setActiveWorkerMenu] = useState<string | null>(null);
   const workerMenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,11 +142,19 @@ export function WorkerList({
     }
   }
 
-  function openWorkerMetaEditor(w: { id: string; name: string; description?: string }) {
+  function openWorkerMetaEditor(w: {
+    id: string;
+    name: string;
+    description?: string;
+  }) {
     setWorkerMetaError("");
     setEditWorkerName(w.name);
     setEditWorkerDesc(w.description ?? "");
-    setEditingWorker({ id: w.id, name: w.name, description: w.description ?? "" });
+    setEditingWorker({
+      id: w.id,
+      name: w.name,
+      description: w.description ?? "",
+    });
     setActiveWorkerMenu(null);
   }
 
@@ -157,7 +168,11 @@ export function WorkerList({
     setWorkerMetaError("");
     setSavingWorkerMeta(true);
     try {
-      const result = await workerUpdateMeta(editingWorker.id, trimmedName, editWorkerDesc.trim());
+      const result = await workerUpdateMeta(
+        editingWorker.id,
+        trimmedName,
+        editWorkerDesc.trim(),
+      );
       if (!result.ok) {
         setWorkerMetaError(result.error || "保存失败");
         return;
@@ -240,6 +255,7 @@ export function WorkerList({
         return;
       }
       setSkillsMap((prev) => ({ ...prev, [workerId]: result.skills ?? [] }));
+      await clearWorkerSessions([workerId]);
     } catch {
       setProbeError("加载 skill 失败");
     } finally {
@@ -346,7 +362,9 @@ export function WorkerList({
                         disabled={installingSkillWorkerId === w.id}
                         onClick={() => void handleSkillImportClick(w.id)}
                       >
-                        {installingSkillWorkerId === w.id ? "导入中…" : "导入 Skill"}
+                        {installingSkillWorkerId === w.id
+                          ? "导入中…"
+                          : "导入 Skill"}
                       </button>
                       <button
                         className={styles.workerMenuItem}
@@ -426,8 +444,16 @@ export function WorkerList({
       )}
 
       {editingWorker && (
-        <div className={styles.editorOverlay} onClick={() => { if (!savingWorkerMeta) setEditingWorker(null); }}>
-          <div className={styles.metaDialog} onClick={(e) => e.stopPropagation()}>
+        <div
+          className={styles.editorOverlay}
+          onClick={() => {
+            if (!savingWorkerMeta) setEditingWorker(null);
+          }}
+        >
+          <div
+            className={styles.metaDialog}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className={styles.editorHeader}>
               <div className={styles.editorTitle}>编辑 Worker 信息</div>
               <div className={styles.editorActions}>
@@ -484,7 +510,10 @@ export function WorkerList({
       )}
 
       {editingSkill && (
-        <div className={styles.editorOverlay} onClick={() => closeSkillEditor()}>
+        <div
+          className={styles.editorOverlay}
+          onClick={() => closeSkillEditor()}
+        >
           <div
             className={styles.editorDialog}
             onClick={(e) => e.stopPropagation()}

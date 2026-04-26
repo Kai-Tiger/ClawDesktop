@@ -1,0 +1,28 @@
+appId: ai.openclaw.rednote.desktop
+productName: Clawin Desktop
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+asar: true
+extraResources:
+  - from: intern.zip
+    to: intern.zip
+  - from: ../../runtime-x64
+    to: runtime
+  - from: ../../workers
+    to: workers
+    filter:
+      - "**/*"
+      - "!**/node_modules/**"
+      - "!**/memory/**"
+      - "!**/media/**"
+      - "!**/skills/*/browser-data/**"
+      - "!**/.git/**"
+      - "!**/package-lock.json"
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
+  artifactName: "${productName}-${version}-${arch}.${ext}"
