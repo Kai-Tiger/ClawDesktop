@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ast
 import json
 import os
 import re
@@ -170,11 +171,35 @@ def summarize_log_timing(log_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
         "exit": None,
         "done": None,
         "spawn_session_id": None,
+        "http_agent_start": None,
+        "http_fetch_start": None,
+        "http_fetch_end": None,
+        "http_failed": None,
+        "http_reply": None,
+        "cli_fallback_start": None,
+        "cli_start": None,
+        "req_meta": None,
     }
     for item in log_lines:
         msg = item["msg"]
         if out["start"] is None and msg.startswith("START "):
             out["start"] = item
+        if out["req_meta"] is None and msg.startswith("HTTP req meta "):
+            out["req_meta"] = item
+        if out["http_agent_start"] is None and msg.startswith("HTTP-agent") and msg.endswith(" start"):
+            out["http_agent_start"] = item
+        if out["http_fetch_start"] is None and "HTTP fetch →" in msg:
+            out["http_fetch_start"] = item
+        if out["http_fetch_end"] is None and "HTTP fetch ←" in msg:
+            out["http_fetch_end"] = item
+        if out["http_failed"] is None and msg.startswith("HTTP-agent") and " failed:" in msg:
+            out["http_failed"] = item
+        if out["http_reply"] is None and msg.startswith("HTTP reply len="):
+            out["http_reply"] = item
+        if out["cli_fallback_start"] is None and msg.startswith("CLI-agent fallback start"):
+            out["cli_fallback_start"] = item
+        if out["cli_start"] is None and msg.startswith("CLI-agent start"):
+            out["cli_start"] = item
         if out["spawn"] is None and "spawn pid=" in msg:
             out["spawn"] = item
             sm = re.search(r"session=([^\s]+)", msg)
@@ -186,6 +211,188 @@ def summarize_log_timing(log_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
             out["exit"] = item
         if out["done"] is None and msg.startswith("DONE "):
             out["done"] = item
+    return out
+
+
+def infer_route(timing: Dict[str, Any]) -> str:
+    has_http = timing.get("http_agent_start") is not None or timing.get("http_fetch_start") is not None
+    has_cli = timing.get("spawn") is not None or timing.get("cli_start") is not None
+    has_fallback = timing.get("cli_fallback_start") is not None
+    if has_http and has_cli and has_fallback:
+        return "HTTP -> CLI fallback"
+    if has_http and not has_cli:
+        return "HTTP only"
+    if has_cli and not has_http:
+        return "CLI only"
+    if has_http and has_cli:
+        return "HTTP + CLI"
+    return "unknown"
+
+
+def parse_req_meta(msg: str) -> Dict[str, Optional[str]]:
+    fields = {
+        "gateway_model": None,
+        "configured_model": None,
+        "text_len": None,
+        "images": None,
+        "history": None,
+    }
+    pats = {
+        "gateway_model": re.compile(r"gatewayModel=([^\s]+)"),
+        "configured_model": re.compile(r"configuredModel=([^\s]+)"),
+        "text_len": re.compile(r"textLen=(\d+)"),
+        "images": re.compile(r"images=(\d+)"),
+        "history": re.compile(r"history=(\d+)"),
+    }
+    for k, p in pats.items():
+        m = p.search(msg)
+        if m:
+            fields[k] = m.group(1)
+    return fields
+
+
+def parse_http_fetch_end(msg: str) -> Dict[str, Optional[str]]:
+    out = {"status": None, "duration_ms": None}
+    m = re.search(r"HTTP fetch ←\s+(\d+)\s+\((\d+)ms\)", msg)
+    if m:
+        out["status"] = m.group(1)
+        out["duration_ms"] = m.group(2)
+    return out
+
+
+def extract_braced_object(text: str, start: int) -> Optional[str]:
+    depth = 0
+    in_str = False
+    escape = False
+    quote = ""
+    begin = -1
+
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == quote:
+                in_str = False
+            continue
+
+        if ch in ('"', "'"):
+            in_str = True
+            quote = ch
+            continue
+        if ch == "{":
+            if depth == 0:
+                begin = i
+            depth += 1
+            continue
+        if ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and begin >= 0:
+                    return text[begin : i + 1]
+    return None
+
+
+def parse_jsonish_object(text: str) -> Optional[Dict[str, Any]]:
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    try:
+        obj = ast.literal_eval(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    return None
+
+
+def flatten_scalars(obj: Any, prefix: str = "") -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = f"{prefix}.{k}" if prefix else str(k)
+            out.update(flatten_scalars(v, key))
+    elif isinstance(obj, list):
+        for idx, v in enumerate(obj):
+            key = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
+            out.update(flatten_scalars(v, key))
+    elif isinstance(obj, (str, int, float, bool)):
+        if prefix:
+            out[prefix] = str(obj)
+    return out
+
+
+def parse_http_usage_from_text(text: str) -> Dict[str, str]:
+    usage: Dict[str, str] = {}
+    lowered = text.lower()
+
+    usage_pos = lowered.find("usage")
+    if usage_pos >= 0:
+        brace_pos = text.find("{", usage_pos)
+        if brace_pos >= 0:
+            obj_text = extract_braced_object(text, brace_pos)
+            if obj_text:
+                parsed = parse_jsonish_object(obj_text)
+                if isinstance(parsed, dict):
+                    usage.update(flatten_scalars(parsed))
+
+    for m in re.finditer(
+        r"([A-Za-z_][A-Za-z0-9_.-]*(?:token|tokens)[A-Za-z0-9_.-]*)\s*[:=]\s*\"?(\d+)\"?",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        usage[m.group(1)] = m.group(2)
+
+    return usage
+
+
+def parse_http_usage_from_custom(custom_row: Optional[Tuple[int, Dict[str, Any]]]) -> Dict[str, str]:
+    if not custom_row:
+        return {}
+
+    _, row = custom_row
+    data = row.get("data")
+    if not isinstance(data, dict):
+        return {}
+
+    out: Dict[str, str] = {}
+    for k, v in data.items():
+        kl = str(k).lower()
+        if kl == "usage" and isinstance(v, dict):
+            out.update(flatten_scalars(v))
+        elif "token" in kl and isinstance(v, (str, int, float, bool)):
+            out[str(k)] = str(v)
+    return out
+
+
+def collect_http_token_usage(
+    log_lines: List[Dict[str, Any]], timing: Dict[str, Any], chain: Optional[Dict[str, Any]]
+) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+
+    candidates: List[str] = []
+    for item in log_lines:
+        msg = item.get("msg", "")
+        lm = msg.lower()
+        if "http" in lm and ("usage" in lm or "token" in lm):
+            candidates.append(msg)
+
+    if timing.get("http_reply"):
+        candidates.append(timing["http_reply"]["msg"])
+
+    for text in candidates:
+        out.update(parse_http_usage_from_text(text))
+
+    if chain:
+        out.update(parse_http_usage_from_custom(chain.get("custom_row")))
+
     return out
 
 
@@ -378,6 +585,38 @@ def main() -> None:
     print(f"openclaw sessionId: {session_id or 'N/A'}")
     print(f"provider/model: {status_info.get('provider') or 'N/A'} / {status_info.get('model') or 'N/A'}")
 
+    print("\n== Route ==")
+    route = infer_route(timing)
+    print(f"route: {route}")
+    if timing.get("req_meta"):
+        req_meta = parse_req_meta(timing["req_meta"]["msg"])
+        print(
+            "http req meta: "
+            f"gatewayModel={req_meta['gateway_model'] or 'N/A'} "
+            f"configuredModel={req_meta['configured_model'] or 'N/A'} "
+            f"textLen={req_meta['text_len'] or 'N/A'} "
+            f"images={req_meta['images'] or 'N/A'} "
+            f"history={req_meta['history'] or 'N/A'}"
+        )
+    if timing.get("http_fetch_end"):
+        http_end = parse_http_fetch_end(timing["http_fetch_end"]["msg"])
+        print(
+            "http response: "
+            f"status={http_end['status'] or 'N/A'} "
+            f"fetchDuration={fmt_ms(float(http_end['duration_ms'])) if http_end['duration_ms'] else 'N/A'}"
+        )
+    if timing.get("http_failed"):
+        print(f"http failed: {timing['http_failed']['msg']}")
+    if timing.get("http_reply"):
+        print(f"http reply: {timing['http_reply']['msg']}")
+    if route.startswith("HTTP"):
+        token_usage = collect_http_token_usage(log_lines, timing, chain)
+        if token_usage:
+            joined = " ".join(f"{k}={v}" for k, v in sorted(token_usage.items()))
+            print(f"http token usage: {joined}")
+        else:
+            print("http token usage: N/A (no usage/token fields found in logs or session custom data)")
+
     print("\n== Main Log Timeline ==")
     if not log_lines:
         print("No [chat:*][messageId] log lines found.")
@@ -428,6 +667,14 @@ def main() -> None:
         print(f"spawn -> first status: {fmt_ms(first_status['plus_ms'] - spawn['plus_ms'])}")
     else:
         print("spawn -> first status: N/A")
+
+    if timing.get("http_fetch_start") and timing.get("http_fetch_end"):
+        print(
+            "http fetch window: "
+            f"{fmt_ms(timing['http_fetch_end']['plus_ms'] - timing['http_fetch_start']['plus_ms'])}"
+        )
+    else:
+        print("http fetch window: N/A")
 
     if spawn and exit_row:
         print(f"spawn -> CLI exit: {fmt_ms(exit_row['plus_ms'] - spawn['plus_ms'])}")

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { clearWorkerSessions } from "../../api/gateway";
 import { useChat } from "../../hooks/useChat";
 import { useChatStore } from "../../store/chatStore";
 import type { ImageInput } from "../../types";
@@ -201,6 +202,15 @@ export function Composer() {
   const removeFile = (i: number) =>
     setPendingFiles((prev) => prev.filter((_, idx) => idx !== i));
 
+  const handleClear = () => {
+    if (!currentWorkerId) return;
+    clearMessages(currentWorkerId);
+    setPendingImages([]);
+    setPendingFiles([]);
+    setAttachError("");
+    clearWorkerSessions([currentWorkerId]).catch(console.error);
+  };
+
   const hasPreviews = pendingImages.length > 0 || pendingFiles.length > 0;
 
   return (
@@ -286,7 +296,7 @@ export function Composer() {
       <div className={styles.composerToolbar}>
         <button
           className={styles.clearBtn}
-          onClick={() => currentWorkerId && clearMessages(currentWorkerId)}
+          onClick={handleClear}
         >
           /Clear
         </button>

@@ -40,6 +40,8 @@ interface WsInstance {
 
 class OpenClawService {
   private readonly runtimeVersion = '0.2.0';
+  private readonly httpTimeoutMs = 600000;
+  private readonly cliTimeoutMs = 600000;
   private readonly agentSessionEpoch = new Map<string, number>();
   private readonly agentGroupSessionEpoch = new Map<string, number>();
   private gatewayProcess: ChildProcess | null = null;
@@ -521,7 +523,154 @@ class OpenClawService {
     } catch { /* ignore write errors */ }
   }
 
-  runOpenClaw(args: string[], opts?: { cwd?: string; homeOverride?: string; profileOverride?: string }): Promise<ExecResult> {
+  private writeToolSchemaDump(payload: Record<string, unknown>, traceId?: string): void {
+    const logsDir = path.join(this.userRuntimeRoot, 'logs');
+    try {
+      fs.mkdirSync(logsDir, { recursive: true });
+      fs.writeFileSync(path.join(logsDir, 'tool-schema-dump.json'), JSON.stringify(payload, null, 2), 'utf8');
+      fs.appendFileSync(path.join(logsDir, 'tool-schema-dump.jsonl'), `${JSON.stringify(payload)}\n`, 'utf8');
+      if (traceId) {
+        fs.writeFileSync(path.join(logsDir, `tool-schema-dump-${traceId}.json`), JSON.stringify(payload, null, 2), 'utf8');
+      }
+    } catch (err) {
+      this.writeChatLog(`[tool-schema-dump] write failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private buildHttpPreflightDump(
+    workerPath: string,
+    gatewayModel: string,
+    configuredModel: string,
+    message: string,
+    images: ImageInput[],
+    history: MessageItem[],
+    traceId?: string
+  ): Record<string, unknown> {
+    const soulPath = path.join(workerPath, 'SOUL.md');
+    const agentsPath = path.join(workerPath, 'AGENTS.md');
+    const toolsPath = path.join(workerPath, 'TOOLS.md');
+    const soul = this.readWorkerFile(workerPath, 'SOUL.md');
+    const agents = this.readWorkerFile(workerPath, 'AGENTS.md');
+    const tools = this.readWorkerFile(workerPath, 'TOOLS.md');
+
+    const skillsDir = path.join(workerPath, 'skills');
+    const skillFiles: Array<Record<string, unknown>> = [];
+    try {
+      if (fs.existsSync(skillsDir)) {
+        for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const skillMdPath = path.join(skillsDir, entry.name, 'SKILL.md');
+          if (!fs.existsSync(skillMdPath)) continue;
+          let chars = -1;
+          try {
+            chars = fs.readFileSync(skillMdPath, 'utf8').length;
+          } catch {
+            chars = -1;
+          }
+          skillFiles.push({ name: entry.name, skillMdPath, skillMdChars: chars });
+        }
+      }
+    } catch {
+      // ignore debug scan errors
+    }
+
+    const memoryDir = path.join(workerPath, 'memory');
+    const memoryEntries: Array<Record<string, unknown>> = [];
+    let memoryTotalFiles = 0;
+    const MAX_MEMORY_ENTRIES = 200;
+    const walkMemory = (dir: string, relBase = '') => {
+      if (memoryEntries.length >= MAX_MEMORY_ENTRIES) return;
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (memoryEntries.length >= MAX_MEMORY_ENTRIES) return;
+        const relPath = relBase ? path.join(relBase, entry.name) : entry.name;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkMemory(fullPath, relPath);
+          continue;
+        }
+        memoryTotalFiles += 1;
+        let size = -1;
+        let mtime = '';
+        try {
+          const stat = fs.statSync(fullPath);
+          size = stat.size;
+          mtime = stat.mtime.toISOString();
+        } catch {
+          // ignore stat errors
+        }
+        memoryEntries.push({ relPath, size, mtime });
+      }
+    };
+    if (fs.existsSync(memoryDir)) {
+      walkMemory(memoryDir);
+    }
+
+    const extractText = (content: MessageContent): string => {
+      if (typeof content === 'string') return content;
+      if (!Array.isArray(content)) return '';
+      return content
+        .map((blk) => (blk?.type === 'text' && typeof blk.text === 'string' ? blk.text : ''))
+        .filter(Boolean)
+        .join('\n');
+    };
+    const refSet = new Set<string>();
+    const refRegex = /(?:^|[\s`"'])((?:\.\/)?memory\/[^\s`"']+)/g;
+    const pushRefs = (text: string) => {
+      if (!text) return;
+      for (const m of text.matchAll(refRegex)) {
+        const p = (m[1] || '').replace(/[),.;:]+$/g, '');
+        if (p) refSet.add(p);
+      }
+    };
+    pushRefs(message);
+    for (const item of history) {
+      pushRefs(extractText(item.content));
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      traceId: traceId || null,
+      source: 'chatHttp.preflight',
+      note: 'This dump captures prompt context visible in desktop client before gateway request. Final runtime tool JSON schema is assembled inside gateway/agent runtime.',
+      model: { gatewayModel, configuredModel },
+      requestMeta: {
+        textLen: message.length,
+        historyCount: history.length,
+        imageCount: images.length,
+        imageMimeTypes: images.map((i) => i.mediaType),
+      },
+      injectedFiles: {
+        soulPath,
+        soulChars: soul.length,
+        agentsPath,
+        agentsChars: agents.length,
+        toolsPath,
+        toolsChars: tools.length,
+        toolsContent: tools,
+      },
+      skills: {
+        skillsDir,
+        count: skillFiles.length,
+        entries: skillFiles,
+      },
+      memory: {
+        memoryDir,
+        exists: fs.existsSync(memoryDir),
+        totalFiles: memoryTotalFiles,
+        dumpedFiles: memoryEntries.length,
+        files: memoryEntries,
+        referencedPaths: Array.from(refSet),
+      },
+    };
+  }
+
+  runOpenClaw(args: string[], opts?: { cwd?: string; homeOverride?: string; profileOverride?: string; timeoutMs?: number }): Promise<ExecResult> {
     return new Promise((resolve) => {
       const home = opts?.homeOverride || this.userOpenClawHome;
       const profile = opts?.profileOverride || this.openclawProfile;
@@ -541,15 +690,34 @@ class OpenClawService {
         }
       });
 
+      let settled = false;
       let stdout = '';
       let stderr = '';
+      const timeoutMs = opts?.timeoutMs;
+      const timeout = typeof timeoutMs === 'number' && timeoutMs > 0
+        ? setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            stderr += `\n[timeout] command timed out after ${timeoutMs}ms`;
+            child.kill('SIGTERM');
+            resolve({ code: -1, stdout, stderr, cmd });
+          }, timeoutMs)
+        : null;
       child.stdout.on('data', (d) => (stdout += d.toString()));
       child.stderr.on('data', (d) => (stderr += d.toString()));
       child.on('error', (err) => {
+        if (timeout) clearTimeout(timeout);
+        if (settled) return;
+        settled = true;
         stderr += `\n[spawn error] ${err.message}`;
         resolve({ code: -1, stdout, stderr, cmd });
       });
-      child.on('close', (code) => resolve({ code, stdout, stderr, cmd }));
+      child.on('close', (code) => {
+        if (timeout) clearTimeout(timeout);
+        if (settled) return;
+        settled = true;
+        resolve({ code, stdout, stderr, cmd });
+      });
     });
   }
 
@@ -1042,7 +1210,7 @@ class OpenClawService {
 
     const output = Array.isArray(root.output) ? root.output : [];
     const usage = root.usage && typeof root.usage === 'object' ? (root.usage as Record<string, unknown>) : null;
-    const usageKeys = usage ? Object.keys(usage).slice(0, 6).join(',') : 'none';
+    const usagePayload = usage ? JSON.stringify(usage) : 'none';
 
     return [
       `keys=${keys}`,
@@ -1050,20 +1218,21 @@ class OpenClawService {
       `msgContentType=${msgContentType}`,
       `outputItems=${output.length}`,
       `hasOutputText=${typeof root.output_text === 'string'}`,
-      `usageKeys=${usageKeys}`,
+      `usage=${usagePayload}`,
     ].join(' ');
   }
 
   private async chatHttp(
     gatewayModel: string,
-    workerPath: string,
+    promptContextPath: string,
     message: string,
     images: ImageInput[],
     history: MessageItem[],
-    onLog?: (step: string) => void
+    onLog?: (step: string) => void,
+    traceId?: string
   ): Promise<string> {
-    const soul   = this.readWorkerFile(workerPath, 'SOUL.md');
-    const agents = this.readWorkerFile(workerPath, 'AGENTS.md');
+    const soul   = this.readWorkerFile(promptContextPath, 'SOUL.md');
+    const agents = this.readWorkerFile(promptContextPath, 'AGENTS.md');
     const systemContent = [
       soul   && `# Soul\n${soul}`,
       agents && `# Workspace\n${agents}`,
@@ -1083,23 +1252,55 @@ class OpenClawService {
     ];
 
     const configuredModel = this.getConfiguredModelFull() || '(unset)';
+    const schemaDump = this.buildHttpPreflightDump(
+      promptContextPath,
+      gatewayModel,
+      configuredModel,
+      message,
+      images,
+      history,
+      traceId
+    );
+    this.writeToolSchemaDump(schemaDump, traceId);
+    const memoryMeta = schemaDump.memory as Record<string, unknown> | undefined;
+    if (memoryMeta) {
+      const refs = Array.isArray(memoryMeta.referencedPaths) ? memoryMeta.referencedPaths.length : 0;
+      const totalFiles = typeof memoryMeta.totalFiles === 'number' ? memoryMeta.totalFiles : 0;
+      onLog?.(`memory preflight totalFiles=${totalFiles} referenced=${refs}`);
+    }
     onLog?.(
       `req meta gatewayModel=${gatewayModel} configuredModel=${configuredModel} textLen=${message.length} images=${images.length} history=${history.length} mimes=${images.map((i) => i.mediaType).join('|') || '-'} sizes=${images.map((i) => i.data.length).join('|') || '-'}`
     );
 
     const url = `http://127.0.0.1:${this.gatewayPort}/v1/chat/completions`;
-    onLog?.('fetch → POST /v1/chat/completions');
+    onLog?.(`fetch → POST /v1/chat/completions timeout=${this.httpTimeoutMs}ms`);
     const t = Date.now();
     const gatewayToken = this.getGatewayToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (gatewayToken) {
       headers['Authorization'] = `Bearer ${gatewayToken}`;
     }
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model: gatewayModel, messages }),
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), this.httpTimeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model: gatewayModel, messages }),
+        signal: ctrl.signal,
+      });
+    } catch (err) {
+      const elapsed = Date.now() - t;
+      if (err instanceof Error && err.name === 'AbortError') {
+        onLog?.(`fetch × timeout (${elapsed}ms)`);
+        throw new Error(`HTTP 请求超时（>${this.httpTimeoutMs}ms）`);
+      }
+      onLog?.(`fetch × failed (${elapsed}ms) ${err}`);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     onLog?.(`fetch ← ${res.status} (${Date.now() - t}ms)`);
 
     if (!res.ok) {
@@ -1139,6 +1340,12 @@ class OpenClawService {
       const spawnAt = Date.now();
       const ms = () => `${Date.now() - spawnAt}ms`;
       onLog?.(`spawn pid=${child.pid} session=${sessionId}`);
+      let cliTimedOut = false;
+      const timer = setTimeout(() => {
+        cliTimedOut = true;
+        onLog?.(`[${ms()}] CLI timeout (${this.cliTimeoutMs}ms)`);
+        child.kill('SIGTERM');
+      }, this.cliTimeoutMs);
 
       let stdout = '';
       let stderr = '';
@@ -1177,11 +1384,17 @@ class OpenClawService {
       });
 
       child.on('error', (err: Error) => {
+        clearTimeout(timer);
         onLog?.(`[${ms()}] spawn error: ${err.message}`);
         resolve(`[启动失败] ${err.message}`);
       });
 
       child.on('close', (code) => {
+        clearTimeout(timer);
+        if (cliTimedOut || code === null) {
+          resolve(`调用失败: CLI 执行超时（>${this.cliTimeoutMs}ms）`);
+          return;
+        }
         onLog?.(`[${ms()}] CLI exit code=${code}`);
         const combined = [stderr, stdout].filter(Boolean).join('\n');
         const stripped = stripAnsi(combined);
@@ -1227,6 +1440,12 @@ class OpenClawService {
 
     const trimmed = (message || '').trim();
     const hasImages = Array.isArray(images) && images.length > 0;
+    let timeoutNotice = '';
+    const markTimeoutNotice = (err: unknown, source: string) => {
+      const text = err instanceof Error ? err.message : String(err);
+      if (!/超时|timeout/i.test(text)) return;
+      timeoutNotice = `⚠️ ${source}请求超时（>${this.httpTimeoutMs}ms），已切换到 CLI 继续处理。`;
+    };
     if (!trimmed && !hasImages) {
       return { code: -1, stdout: '', stderr: '消息不能为空', cmd: '', reply: '消息不能为空' };
     }
@@ -1268,41 +1487,60 @@ class OpenClawService {
       }
     }
 
-    if (selected.mode === 'agent' && hasImages) {
-      log('HTTP-vision(agent) start');
+    if (selected.mode === 'agent') {
+      log(`HTTP-agent${hasImages ? '-vision' : ''} start`);
       try {
-        const reply = await this.chatHttp(`openclaw/${selected.id}`, selected.path, trimmed, images ?? [], history ?? [], (step) => log(`HTTP ${step}`));
+        const reply = await this.chatHttp(
+          `openclaw/${selected.id}`,
+          this.workerAgentWorkspacePath(selected.id),
+          trimmed,
+          images ?? [],
+          history ?? [],
+          (step) => log(`HTTP ${step}`),
+          traceId
+        );
         log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
         return { code: 0, stdout: reply, stderr: '', cmd: `POST /v1/chat/completions`, reply };
       } catch (httpErr) {
-        log(`HTTP-vision(agent) failed: ${httpErr}`);
-        return {
-          code: -1,
-          stdout: '',
-          stderr: String(httpErr),
-          cmd: `POST /v1/chat/completions`,
-          reply: `图片请求失败: ${httpErr instanceof Error ? httpErr.message : String(httpErr)}`,
-        };
+        log(`HTTP-agent${hasImages ? '-vision' : ''} failed: ${httpErr}`);
+        markTimeoutNotice(httpErr, 'HTTP-agent ');
+        if (hasImages) {
+          return {
+            code: -1,
+            stdout: '',
+            stderr: String(httpErr),
+            cmd: `POST /v1/chat/completions`,
+            reply: `图片请求失败: ${httpErr instanceof Error ? httpErr.message : String(httpErr)}`,
+          };
+        }
       }
-    }
 
-    if (selected.mode === 'agent') {
-      log('CLI-agent start');
+      log('CLI-agent fallback start');
       const reply = await this.chatCliAgent(
         selected.id, trimmed,
         (step) => log(`CLI-agent ${step}`),
         groupId
       );
-      log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
-      return { code: 0, stdout: reply, stderr: '', cmd: `openclaw agent --agent ${selected.id}`, reply };
+      const finalReply = timeoutNotice ? `${timeoutNotice}\n\n${reply}` : reply;
+      log(`DONE reply-len=${finalReply.length} total=${Date.now() - t0}ms`);
+      return { code: 0, stdout: finalReply, stderr: '', cmd: `openclaw agent --agent ${selected.id}`, reply: finalReply };
     } else {
       log('HTTP start');
       try {
-        const reply = await this.chatHttp('openclaw', selected.path, trimmed, images ?? [], history ?? [], (step) => log(`HTTP ${step}`));
+        const reply = await this.chatHttp(
+          'openclaw',
+          this.workerAgentWorkspacePath(selected.id),
+          trimmed,
+          images ?? [],
+          history ?? [],
+          (step) => log(`HTTP ${step}`),
+          traceId
+        );
         log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
         return { code: 0, stdout: reply, stderr: '', cmd: `POST /v1/chat/completions`, reply };
       } catch (httpErr) {
         log(`HTTP failed: ${httpErr}`);
+        markTimeoutNotice(httpErr, 'HTTP ');
         console.warn('[chat] HTTP API failed, falling back to CLI:', httpErr);
       }
     }
@@ -1313,7 +1551,7 @@ class OpenClawService {
     const sessionId = this.getDesktopSessionId(selected.id, groupId);
     const res = await this.runOpenClaw(
       ['agent', '--agent', selected.id, '--session-id', sessionId, '--message', trimmed, '--json'],
-      { cwd: agentWorkspace }
+      { cwd: agentWorkspace, timeoutMs: this.cliTimeoutMs }
     );
     log(`CLI-fallback exit code=${res.code}`);
 
@@ -1345,6 +1583,9 @@ class OpenClawService {
     if (!reply) {
       const cliError = this.extractCliErrorText(stripped);
       reply = cliError ? `调用失败: ${cliError}` : '(无回复内容)';
+    }
+    if (timeoutNotice) {
+      reply = `${timeoutNotice}\n\n${reply}`;
     }
     log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
     return { ...res, reply };
@@ -1436,14 +1677,26 @@ class OpenClawService {
 
   installSkillFromDir(workerId: string, skillDirPath: string): { ok: boolean; error?: string; skills?: SkillMeta[] } {
     try {
-      const workspacePath = this.workerAgentWorkspacePath(workerId);
-      const skillsDst = path.join(workspacePath, 'skills');
-      fs.mkdirSync(skillsDst, { recursive: true });
+      const selected = this.listWorkers().find((w) => w.id === workerId);
+      if (!selected) {
+        return { ok: false, error: `未找到 worker: ${workerId}` };
+      }
 
+      const workspacePath = this.workerAgentWorkspacePath(workerId);
       const skillName = path.basename(skillDirPath);
-      const destPath = path.join(skillsDst, skillName);
-      if (fs.existsSync(destPath)) fs.rmSync(destPath, { recursive: true, force: true });
-      fs.cpSync(skillDirPath, destPath, { recursive: true });
+      const destinations = Array.from(
+        new Set([
+          path.join(workspacePath, 'skills'),
+          path.join(selected.path, 'skills'),
+        ])
+      );
+
+      for (const skillsDst of destinations) {
+        fs.mkdirSync(skillsDst, { recursive: true });
+        const destPath = path.join(skillsDst, skillName);
+        if (fs.existsSync(destPath)) fs.rmSync(destPath, { recursive: true, force: true });
+        fs.cpSync(skillDirPath, destPath, { recursive: true });
+      }
 
       this.clearAgentSessionSnapshot(workerId);
       const skills = this.readWorkspaceSkills(workerId);
