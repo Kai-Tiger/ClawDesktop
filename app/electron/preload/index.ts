@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   workerOpenFileDialog: () => ipcRenderer.invoke('workers:open-file-dialog'),
   workerOpenSkillDirDialog: () => ipcRenderer.invoke('workers:open-skill-dir-dialog'),
   workerGetInternZipPath: () => ipcRenderer.invoke('workers:get-intern-zip-path'),
+  workerGetBlankZipPath: () => ipcRenderer.invoke('workers:get-blank-zip-path'),
   workerProbeZip: (zipPath: string) => ipcRenderer.invoke('workers:probe-zip', zipPath),
   workerInstallFromTemp: (tempDir: string, rootDir: string, id: string, name: string, description: string) =>
     ipcRenderer.invoke('workers:install-from-temp', tempDir, rootDir, id, name, description),

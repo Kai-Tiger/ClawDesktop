@@ -21,6 +21,7 @@ interface ChatStore {
   selectWorker: (id: string) => void;
   pushMessage: (workerId: string, msg: ChatMessage) => void;
   updateLastMessage: (workerId: string, content: string) => void;
+  updateMessageById: (workerId: string, msgId: string, content: string) => void;
   appendToLastMessage: (workerId: string, chunk: string) => void;
   setSending: (workerId: string, value: boolean) => void;
   clearMessages: (workerId: string) => void;
@@ -72,6 +73,15 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => {
       const list = [...(state.messages[workerId] ?? [])];
       if (list.length > 0) list[list.length - 1] = { ...list[list.length - 1], content, completedAt: Date.now() };
+      return { messages: { ...state.messages, [workerId]: list } };
+    }),
+
+  updateMessageById: (workerId, msgId, content) =>
+    set((state) => {
+      const list = [...(state.messages[workerId] ?? [])];
+      const idx = list.findIndex((m) => m.msgId === msgId);
+      if (idx < 0) return {};
+      list[idx] = { ...list[idx], content, completedAt: Date.now() };
       return { messages: { ...state.messages, [workerId]: list } };
     }),
 

@@ -9,6 +9,8 @@ asar: true
 extraResources:
   - from: intern.zip
     to: intern.zip
+  - from: blank.zip
+    to: blank.zip
   - from: ../../runtime
     to: runtime
   - from: ../../workers

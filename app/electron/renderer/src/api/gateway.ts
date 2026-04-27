@@ -37,6 +37,7 @@ interface GatewayApi {
   workerOpenFileDialog: () => Promise<string | null>;
   workerOpenSkillDirDialog: () => Promise<string | null>;
   workerGetInternZipPath: () => Promise<string>;
+  workerGetBlankZipPath: () => Promise<string>;
   workerProbeZip: (zipPath: string) => Promise<WorkerZipProbe>;
   workerInstallFromTemp: (tempDir: string, rootDir: string, id: string, name: string, description: string) => Promise<WorkerInstallResult>;
   workerExport: (workerId: string) => Promise<WorkerExportResult>;
@@ -93,6 +94,7 @@ export const telegramRemove = (accountId: string) => api().telegramRemove(accoun
 export const workerOpenFileDialog = () => api().workerOpenFileDialog();
 export const workerOpenSkillDirDialog = () => api().workerOpenSkillDirDialog();
 export const workerGetInternZipPath = () => api().workerGetInternZipPath();
+export const workerGetBlankZipPath = () => api().workerGetBlankZipPath();
 export const workerProbeZip = (zipPath: string) => api().workerProbeZip(zipPath);
 export const workerInstallFromTemp = (tempDir: string, rootDir: string, id: string, name: string, description: string) =>
   api().workerInstallFromTemp(tempDir, rootDir, id, name, description);

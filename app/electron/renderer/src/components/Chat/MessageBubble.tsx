@@ -4,7 +4,6 @@ import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { workerOpenFileLocation } from "../../api/gateway";
-import styles from "./MessageBubble.module.css";
 
 const FILE_BLOCK_DISPLAY_LINES = 10;
 
@@ -46,6 +45,7 @@ export function MessageBubble({
   workerId,
   msgId,
 }: MessageBubbleProps) {
+  const isUser = role === "user";
   const codeComponents = {
     code({
       children,
@@ -57,12 +57,12 @@ export function MessageBubble({
       if (!isBlock && workerId && looksLikeFilePath(text)) {
         return (
           <span
-            className={styles.fileLink}
+            className="inline-flex cursor-pointer items-center gap-0.5 rounded"
             onClick={() => void workerOpenFileLocation(workerId, text)}
-            title={`打开目录: ${text}`}
+            title={`定位文件: ${text}`}
           >
-            <code className={styles.fileLinkCode}>{children}</code>
-            <span className={styles.fileLinkIcon}>📂</span>
+            <code className="font-mono text-[0.9em] underline decoration-dashed underline-offset-2">{children}</code>
+            <span className="select-none text-[11px] leading-none">📂</span>
           </span>
         );
       }
@@ -76,7 +76,7 @@ export function MessageBubble({
 
   function renderMarkdown(text: string) {
     return (
-      <div className={styles.markdown}>
+      <div className="chat-markdown min-w-0 [&_blockquote]:m-0 [&_code]:font-mono [&_code]:text-[0.9em] [&_ol]:pl-[1.2em] [&_ol]:my-0 [&_p]:my-0 [&_pre]:my-0 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-gray-900 [&_pre]:p-2 [&_ul]:my-0 [&_ul]:pl-[1.2em] [&_p+ol]:mt-2 [&_p+pre]:mt-2 [&_p+ul]:mt-2 [&_p+p]:mt-2 [&_blockquote+p]:mt-2 [&_ol+p]:mt-2 [&_pre+p]:mt-2 [&_ul+p]:mt-2">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeHighlight]}
@@ -98,40 +98,46 @@ export function MessageBubble({
       })
     : "";
 
-  const isThinking = typeof content === 'string' && (content === '思考中…' || content === '思考中...');
-  const completedTimeStr = completedAt && !isThinking
-    ? new Date(completedAt).toLocaleTimeString("zh-CN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      })
-    : "";
+  const isThinking =
+    typeof content === "string" &&
+    (content === "思考中…" || content === "思考中...");
+  const completedTimeStr =
+    completedAt && !isThinking
+      ? new Date(completedAt).toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        })
+      : "";
 
   return (
-    <div className={`${styles.msg} ${styles[role]}`}>
-      <div className={styles.label}>
+    <div className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+      <div className="mb-1 flex items-center gap-1.5 text-[11px] opacity-50">
         <span>{displayName}</span>
-        {timeStr && <span className={styles.time}>{timeStr}</span>}
+        {timeStr && <span className="text-[10px]">{timeStr}</span>}
       </div>
       {typeof content === "string" ? (
         <div
-          className={`${styles.bubble} ${content === "思考中…" || content === "思考中..." ? styles.thinking : ""}`}
+          className={`max-w-[85%] break-words rounded-xl px-3 py-[9px] text-sm leading-6 ${isUser ? "rounded-br border border-blue-500 bg-blue-500 text-white" : "rounded-bl border border-gray-200 bg-gray-100 text-gray-900"} ${isThinking ? "animate-pulse italic" : ""}`}
         >
           {renderMarkdown(truncateFileBlocks(content))}
           {role === "assistant" && msgId && (
-            <div className={styles.msgIdTag}>
-              {msgId}
-              {completedTimeStr ? ` · 完成 ${completedTimeStr}` : ""}
+            <div className="mt-1.5 flex items-center gap-1 text-[10px] font-mono text-gray-400">
+              <div className="select-all">{msgId}</div>
+              <div>{completedTimeStr ? ` · 完成 ${completedTimeStr}` : ""}</div>
             </div>
           )}
         </div>
       ) : (
-        <div className={styles.multiBlocks}>
+        <div className="flex max-w-[85%] flex-col gap-1.5">
           {content.map((block, idx) => {
             if (block.type === "text") {
               return (
-                <div key={`t-${idx}`} className={styles.bubble}>
+                <div
+                  key={`t-${idx}`}
+                  className={`break-words rounded-xl px-3 py-[9px] text-sm leading-6 ${isUser ? "rounded-br border border-blue-500 bg-blue-500 text-white" : "rounded-bl border border-gray-200 bg-gray-100 text-gray-900"}`}
+                >
                   {renderMarkdown(block.text)}
                 </div>
               );
@@ -139,14 +145,14 @@ export function MessageBubble({
             return (
               <img
                 key={`i-${idx}`}
-                className={styles.inlineImage}
+                className="max-h-60 max-w-[min(320px,85vw)] rounded-[10px] border border-[#d5dbe8] bg-white object-contain"
                 src={`data:${block.mediaType};base64,${block.data}`}
                 alt="用户上传图片"
               />
             );
           })}
           {role === "assistant" && msgId && (
-            <div className={styles.msgIdTag}>
+            <div className="mt-1.5 select-all text-[10px] font-mono text-gray-400">
               {msgId}
               {completedTimeStr ? ` · 完成 ${completedTimeStr}` : ""}
             </div>

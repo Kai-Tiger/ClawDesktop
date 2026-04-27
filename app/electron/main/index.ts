@@ -42,8 +42,10 @@ class OpenClawService {
   private readonly runtimeVersion = '0.2.0';
   private readonly httpTimeoutMs = 600000;
   private readonly cliTimeoutMs = 600000;
+  private readonly deniedSubagentTools = ['sessions_spawn'];
   private readonly agentSessionEpoch = new Map<string, number>();
   private readonly agentGroupSessionEpoch = new Map<string, number>();
+  private readonly wsProgressDedupe = new Map<string, { text: string; ts: number }>();
   private gatewayProcess: ChildProcess | null = null;
   gatewayPort = 18789;
   private wsClient: WsInstance | null = null;
@@ -282,6 +284,7 @@ class OpenClawService {
 
     // 为每个 worker 创建/同步专属 openclaw agent
     const workers = this.listWorkers();
+    this.ensureSubagentToolsDenied(workers.map((w) => w.id));
     await Promise.all(workers.map((w) => this.bootstrapWorkerAgent(w).catch((err) => {
       console.error(`[bootstrap] worker agent ${w.id} failed:`, err);
     })));
@@ -907,6 +910,58 @@ class OpenClawService {
     this.wsClient = ws;
     let msgId = 1;
     let connected = false;
+    let subscribedSessionEvents = false;
+    const subscribedMessageKeys = new Set<string>();
+
+    const sendReq = (method: string, params: Record<string, unknown> = {}) => {
+      if (!connected) return;
+      try {
+        ws.send(JSON.stringify({ type: 'req', id: String(msgId++), method, params }));
+      } catch {
+        // ignore ws send errors
+      }
+    };
+
+    const ensureWsSessionSubscriptions = () => {
+      if (!connected) return;
+      if (!subscribedSessionEvents) {
+        sendReq('sessions.subscribe', {});
+        subscribedSessionEvents = true;
+      }
+      for (const worker of this.listWorkers()) {
+        const key = `agent:${worker.id}:main`;
+        if (subscribedMessageKeys.has(key)) continue;
+        sendReq('sessions.messages.subscribe', { key });
+        subscribedMessageKeys.add(key);
+      }
+    };
+
+    const workerIdFromSessionKey = (sessionKey: string): string | null => {
+      const m = /^agent:([^:]+):/.exec(sessionKey || '');
+      return m?.[1] ?? null;
+    };
+
+    const extractAssistantMessage = (msg: unknown): { text: string; hasToolCall: boolean } => {
+      if (!msg || typeof msg !== 'object') return { text: '', hasToolCall: false };
+      const root = msg as Record<string, unknown>;
+      if (root.type !== 'message') return { text: '', hasToolCall: false };
+      const payload = root.message as Record<string, unknown> | undefined;
+      if (!payload || payload.role !== 'assistant') return { text: '', hasToolCall: false };
+      const content = payload.content;
+      if (typeof content === 'string') return { text: content.trim(), hasToolCall: false };
+      if (!Array.isArray(content)) return { text: '', hasToolCall: false };
+      let hasToolCall = false;
+      const parts = content
+        .map((item) => {
+          if (!item || typeof item !== 'object') return '';
+          const block = item as Record<string, unknown>;
+          if (block.type === 'toolCall') hasToolCall = true;
+          if (block.type === 'text' && typeof block.text === 'string') return block.text;
+          return '';
+        })
+        .filter(Boolean);
+      return { text: parts.join('\n').trim(), hasToolCall };
+    };
 
     ws.on('message', (data: unknown) => {
       let parsed: Record<string, unknown>;
@@ -940,7 +995,42 @@ class OpenClawService {
         return;
       }
 
-      if (parsed.type === 'res' && parsed.ok === true) { connected = true; return; }
+      if (parsed.type === 'res' && parsed.ok === true) {
+        connected = true;
+        ensureWsSessionSubscriptions();
+        return;
+      }
+
+      if (parsed.event === 'session.message' && connected) {
+        const payload = parsed.payload as Record<string, unknown> | undefined;
+        const sessionKey = typeof payload?.sessionKey === 'string' ? payload.sessionKey : '';
+        if (!sessionKey) return;
+        const workerId = workerIdFromSessionKey(sessionKey);
+        if (!workerId) return;
+        const message = payload?.message;
+        const { text, hasToolCall } = extractAssistantMessage(message);
+        if (!text) return;
+
+        const progressSignalInText = /进度|处理中|执行中|步骤|阶段|批次|已完成|running|progress|processing|step/i.test(text);
+        if (!hasToolCall && !progressSignalInText) return;
+
+        const compact = text.replace(/\s+/g, ' ').trim();
+        if (!compact) return;
+        const progressHint = /(开始|执行|处理中|进度|完成|导出|第\d+条|batch|step|progress|running)/i;
+        const noisyHint = /(\*\*Prompt\s*\d+|Prompt\s*\d+|Subject:|Dear\s|```|rawChars|schemaChars|propertiesCount|injectedChars|finalPromptText|finalAssistantRawText)/i;
+        if (!progressHint.test(compact) || noisyHint.test(compact)) return;
+        if (compact.length > 180 && !/(进度|完成|导出|第\d+条|开始执行|批量)/i.test(compact)) return;
+        const now = Date.now();
+        const prev = this.wsProgressDedupe.get(workerId);
+        if (prev && prev.text === compact && now - prev.ts < 15000) return;
+        this.wsProgressDedupe.set(workerId, { text: compact, ts: now });
+
+        const content = compact.length > 260 ? `${compact.slice(0, 259)}…` : compact;
+
+        const win = BrowserWindow.getAllWindows()[0];
+        win?.webContents.send('cron:message', { workerId, content: `🟡 进度: ${content}`, role: 'assistant' });
+        return;
+      }
 
       if (parsed.event === 'cron' && connected) {
         const p = parsed.payload as Record<string, unknown> | undefined;
@@ -953,6 +1043,10 @@ class OpenClawService {
         if (!agentId) return;
         const win = BrowserWindow.getAllWindows()[0];
         win?.webContents.send('cron:message', { workerId: agentId, content: summary, role: 'assistant' });
+      }
+
+      if (connected && parsed.type === 'event') {
+        ensureWsSessionSubscriptions();
       }
     });
 
@@ -1311,6 +1405,8 @@ class OpenClawService {
         throw new Error(`HTTP 请求超时（>${this.httpTimeoutMs}ms）`);
       }
       onLog?.(`fetch × failed (${elapsed}ms) ${err}`);
+      onLog?.(`fetch err detail ${this.formatNetworkErrorDetails(err)}`);
+      onLog?.(`fetch err probe ${await this.probeGatewayHealth()}`);
       throw err;
     } finally {
       clearTimeout(timer);
@@ -1326,6 +1422,50 @@ class OpenClawService {
     const content = this.extractReplyText(json) || '(无回复内容)';
     onLog?.(`reply len=${content.length}`);
     return content;
+  }
+
+  private formatNetworkErrorDetails(err: unknown): string {
+    const toPairs = (prefix: string, obj: unknown): string[] => {
+      if (!obj || typeof obj !== 'object') return [];
+      const rec = obj as Record<string, unknown>;
+      const fields = ['name', 'message', 'code', 'errno', 'syscall', 'address', 'port', 'type'];
+      return fields
+        .filter((k) => rec[k] !== undefined && rec[k] !== null)
+        .map((k) => `${prefix}${k}=${String(rec[k]).replace(/\s+/g, ' ').trim()}`);
+    };
+
+    const parts: string[] = [];
+    if (err instanceof Error) {
+      parts.push(`error=${err.name}:${err.message.replace(/\s+/g, ' ').trim()}`);
+      parts.push(...toPairs('', err));
+      const withCause = err as Error & { cause?: unknown };
+      if (withCause.cause) {
+        parts.push(...toPairs('cause.', withCause.cause));
+        if (withCause.cause instanceof Error) {
+          const c = withCause.cause as Error & { cause?: unknown };
+          parts.push(`cause.error=${c.name}:${c.message.replace(/\s+/g, ' ').trim()}`);
+          if (c.cause) parts.push(...toPairs('cause2.', c.cause));
+        }
+      }
+    } else {
+      parts.push(`error=${String(err).replace(/\s+/g, ' ').trim()}`);
+      parts.push(...toPairs('', err));
+    }
+
+    return parts.length > 0 ? parts.join(' ') : 'unavailable';
+  }
+
+  private async probeGatewayHealth(): Promise<string> {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1200);
+    try {
+      const res = await fetch(`http://127.0.0.1:${this.gatewayPort}/v1/models`, { signal: ctrl.signal });
+      return `models_status=${res.status}`;
+    } catch (probeErr) {
+      return `models_probe_failed ${this.formatNetworkErrorDetails(probeErr)}`;
+    } finally {
+      clearTimeout(t);
+    }
   }
 
   private chatCliAgent(
@@ -1373,10 +1513,36 @@ class OpenClawService {
 
       // eslint-disable-next-line no-control-regex
       const NOISE = /^(bind:|listen|gateway|server|port \d|starting|started|ready|\[debug\]|\[info\]|\[warn\]|\[error\]|›|✓)/i;
+      const emitProgress = (raw: string) => {
+        let compact = stripAnsi(raw).replace(/\s+/g, ' ').trim();
+        if (!compact) return;
+        const textField = compact.match(/^"text":\s*"(.*)",?$/);
+        if (textField) {
+          compact = textField[1]
+            .replace(/\\n/g, ' ')
+            .replace(/\\t/g, ' ')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\')
+            .replace(/\s+/g, ' ')
+            .trim();
+        }
+        const progressHint = /(开始|执行|处理中|进度|完成|导出|第\d+条|batch|step|progress|running)/i;
+        const noisyHint = /(\*\*Prompt\s*\d+|Prompt\s*\d+|Subject:|Dear\s|```|rawChars|schemaChars|propertiesCount|injectedChars|finalPromptText|finalAssistantRawText)/i;
+        if (!progressHint.test(compact) || noisyHint.test(compact)) return;
+        if (compact.length > 180 && !/(进度|完成|导出|第\d+条|开始执行|批量)/i.test(compact)) return;
+        const now = Date.now();
+        const prev = this.wsProgressDedupe.get(agentId);
+        if (prev && prev.text === compact && now - prev.ts < 4000) return;
+        this.wsProgressDedupe.set(agentId, { text: compact, ts: now });
+        const content = compact.length > 260 ? `${compact.slice(0, 259)}…` : compact;
+        const win = BrowserWindow.getAllWindows()[0];
+        win?.webContents.send('cron:message', { workerId: agentId, content: `🟡 进度: ${content}`, role: 'assistant' });
+      };
       const handleLine = (line: string) => {
         const clean = stripAnsi(line).trim();
-        if (!clean || clean.startsWith('{') || NOISE.test(clean)) return;
+        if (!clean || clean.startsWith('{') || /^[\[\]{}],?$/.test(clean) || NOISE.test(clean)) return;
         onLog?.(`[${ms()}] status: ${clean}`);
+        emitProgress(clean);
       };
 
       child.stdout.on('data', (d: Buffer) => {
@@ -1446,6 +1612,41 @@ class OpenClawService {
     });
   }
 
+  private shouldPreferCliForLargeTask(message: string, history?: MessageItem[], images?: ImageInput[]): { prefer: boolean; reason: string } {
+    if (Array.isArray(images) && images.length > 0) {
+      return { prefer: false, reason: 'has-images' };
+    }
+
+    const text = (message || '').trim();
+    if (!text) return { prefer: false, reason: 'empty' };
+
+    if (text.length >= 700) {
+      return { prefer: true, reason: `message-len=${text.length}` };
+    }
+
+    const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length >= 30) {
+      return { prefer: true, reason: `line-count=${lines.length}` };
+    }
+
+    const batchHint = /(执行下这个文件|逐行执行|批量|promptexec|---文件:|```csv|csv文件|按顺序执行|依次执行)/i;
+    if (batchHint.test(text)) {
+      return { prefer: true, reason: 'batch-hint' };
+    }
+
+    const toolHeavyMatches = text.match(/(创建|读取|删除|修改|运行|安装|脚本|文件|curl|pip\s+install|python3?\s)/gi) || [];
+    if (toolHeavyMatches.length >= 8 && text.length >= 300) {
+      return { prefer: true, reason: `tool-heavy=${toolHeavyMatches.length}` };
+    }
+
+    const historyCount = Array.isArray(history) ? history.length : 0;
+    if (historyCount >= 40 && text.length >= 300) {
+      return { prefer: true, reason: `history-count=${historyCount}` };
+    }
+
+    return { prefer: false, reason: 'small-task' };
+  }
+
   async chat(workerId: string, message: string, images?: ImageInput[], history?: MessageItem[], traceId?: string, groupId?: string): Promise<ChatResult> {
     const t0 = Date.now();
     const ms = () => `+${Date.now() - t0}ms`;
@@ -1502,6 +1703,19 @@ class OpenClawService {
     }
 
     if (selected.mode === 'agent') {
+      const cliPreference = this.shouldPreferCliForLargeTask(trimmed, history, images);
+      if (cliPreference.prefer) {
+        log(`CLI-agent preferred: ${cliPreference.reason}`);
+        const reply = await this.chatCliAgent(
+          selected.id,
+          trimmed,
+          (step) => log(`CLI-agent ${step}`),
+          groupId
+        );
+        log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
+        return { code: 0, stdout: reply, stderr: '', cmd: `openclaw agent --agent ${selected.id}`, reply };
+      }
+
       log(`HTTP-agent${hasImages ? '-vision' : ''} start`);
       try {
         const reply = await this.chatHttp(
@@ -1603,6 +1817,48 @@ class OpenClawService {
     }
     log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
     return { ...res, reply };
+  }
+
+  private ensureSubagentToolsDenied(workerIds: string[]): void {
+    const ids = Array.from(new Set((workerIds || []).map((id) => (id || '').trim()).filter(Boolean)));
+    if (ids.length === 0) return;
+    const configPath = path.join(this.userOpenClawHome, '.openclaw', 'openclaw.json');
+    if (!fs.existsSync(configPath)) return;
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      raw.agents = raw.agents || {};
+      raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
+      let changed = false;
+
+      for (const id of ids) {
+        const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === id);
+        if (idx < 0) {
+          raw.agents.list.push({ id, tools: { deny: [...this.deniedSubagentTools] } });
+          changed = true;
+          continue;
+        }
+        const entry = raw.agents.list[idx] || {};
+        const tools = entry.tools && typeof entry.tools === 'object'
+          ? ({ ...(entry.tools as Record<string, unknown>) } as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+        const deny = Array.isArray(tools.deny) ? tools.deny.filter((v: unknown) => typeof v === 'string') : [];
+        const managedTools = new Set(['sessions_spawn', 'sessions_yield']);
+        const preserved = deny.filter((tool) => !managedTools.has(tool));
+        const mergedDeny = Array.from(new Set([...preserved, ...this.deniedSubagentTools]));
+        if (JSON.stringify(mergedDeny) !== JSON.stringify(deny)) {
+          tools.deny = mergedDeny;
+          raw.agents.list[idx] = { ...entry, tools };
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
+        for (const id of ids) this.clearAgentSessionSnapshot(id);
+      }
+    } catch {
+      // ignore config patch errors
+    }
   }
 
   private async fetchTelegramBotInfo(token: string): Promise<TelegramBotInfo | null> {
@@ -1724,6 +1980,12 @@ class OpenClawService {
     return this.isDev
       ? path.resolve(this.projectRoot, 'intern.zip')
       : path.join(process.resourcesPath, 'intern.zip');
+  }
+
+  getBlankZipPath(): string {
+    return this.isDev
+      ? path.resolve(this.projectRoot, 'blank.zip')
+      : path.join(process.resourcesPath, 'blank.zip');
   }
 
   private extractZip(zipPath: string, destDir: string): Promise<void> {
@@ -1928,6 +2190,7 @@ class OpenClawService {
           raw.agents.list.push({ id, model: defaultModel });
         }
         fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
+        this.ensureSubagentToolsDenied([id]);
       } catch { /* 写入失败不影响导入结果 */ }
 
       const skills = this.readWorkspaceSkills(id);
@@ -2265,14 +2528,15 @@ class OpenClawService {
 
   openFileLocation(workerId: string, filePath: string): Promise<string> {
     const workspacePath = this.workerAgentWorkspacePath(workerId);
-    let targetDir: string;
-    if (path.isAbsolute(filePath)) {
-      targetDir = path.dirname(filePath);
-    } else {
-      const resolved = path.resolve(workspacePath, filePath);
-      targetDir = path.dirname(resolved);
-    }
+    const targetPath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(workspacePath, filePath);
+    const targetDir = path.dirname(targetPath);
     fs.mkdirSync(targetDir, { recursive: true });
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
+      shell.showItemInFolder(targetPath);
+      return Promise.resolve('');
+    }
     return shell.openPath(targetDir);
   }
 
@@ -2441,6 +2705,7 @@ ipcMain.on('chat:saveHistory', (_evt, data) => service.saveChatHistory(data));
 ipcMain.handle('workers:open-file-dialog', () => service.openFileDialog());
 ipcMain.handle('workers:open-skill-dir-dialog', () => service.openSkillDirDialog());
 ipcMain.handle('workers:get-intern-zip-path', () => service.getInternZipPath());
+ipcMain.handle('workers:get-blank-zip-path', () => service.getBlankZipPath());
 ipcMain.handle('workers:install-skill-from-dir', (_evt, workerId: string, skillDirPath: string) =>
   service.installSkillFromDir(workerId, skillDirPath)
 );

@@ -175,6 +175,8 @@ def summarize_log_timing(log_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
         "http_fetch_start": None,
         "http_fetch_end": None,
         "http_failed": None,
+        "http_error_detail": None,
+        "http_error_probe": None,
         "http_reply": None,
         "cli_fallback_start": None,
         "cli_start": None,
@@ -194,6 +196,10 @@ def summarize_log_timing(log_lines: List[Dict[str, Any]]) -> Dict[str, Any]:
             out["http_fetch_end"] = item
         if out["http_failed"] is None and msg.startswith("HTTP-agent") and " failed:" in msg:
             out["http_failed"] = item
+        if out["http_error_detail"] is None and "HTTP fetch err detail" in msg:
+            out["http_error_detail"] = item
+        if out["http_error_probe"] is None and "HTTP fetch err probe" in msg:
+            out["http_error_probe"] = item
         if out["http_reply"] is None and msg.startswith("HTTP reply len="):
             out["http_reply"] = item
         if out["cli_fallback_start"] is None and msg.startswith("CLI-agent fallback start"):
@@ -523,6 +529,105 @@ def fmt_ms(v: Optional[float]) -> str:
     return f"{v:.0f} ms ({v / 1000.0:.2f} s)"
 
 
+def to_int(v: Any) -> Optional[int]:
+    try:
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v)
+        s = str(v).strip()
+        if not s:
+            return None
+        return int(float(s))
+    except Exception:
+        return None
+
+
+def normalize_real_usage(raw_usage: Dict[str, str]) -> Dict[str, Optional[int]]:
+    candidates: Dict[str, Optional[int]] = {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+        "cache_read_tokens": None,
+        "input_tokens": None,
+        "output_tokens": None,
+    }
+
+    for k, v in raw_usage.items():
+        kl = k.lower()
+        iv = to_int(v)
+        if iv is None:
+            continue
+
+        if "prompt_tokens" in kl:
+            candidates["prompt_tokens"] = iv
+        elif "completion_tokens" in kl:
+            candidates["completion_tokens"] = iv
+        elif "total_tokens" in kl or kl.endswith(".total"):
+            candidates["total_tokens"] = iv
+        elif "cacheread" in kl or "cache_read" in kl:
+            candidates["cache_read_tokens"] = iv
+        elif kl.endswith(".input") or kl == "input":
+            candidates["input_tokens"] = iv
+        elif kl.endswith(".output") or kl == "output":
+            candidates["output_tokens"] = iv
+
+    return candidates
+
+
+def find_tool_schema_dump(logs_dir: str, trace_id: str) -> Optional[str]:
+    p = os.path.join(logs_dir, f"tool-schema-dump-{trace_id}.json")
+    if os.path.exists(p):
+        return p
+    return None
+
+
+def summarize_system_context(dump: Dict[str, Any]) -> Dict[str, Any]:
+    request_meta = dump.get("requestMeta") if isinstance(dump.get("requestMeta"), dict) else {}
+    injected = dump.get("injectedFiles") if isinstance(dump.get("injectedFiles"), dict) else {}
+    skills = dump.get("skills") if isinstance(dump.get("skills"), dict) else {}
+    memory = dump.get("memory") if isinstance(dump.get("memory"), dict) else {}
+
+    injected_char_fields: List[Tuple[str, int]] = []
+    injected_total_chars = 0
+    for k, v in injected.items():
+        if not k.endswith("Chars"):
+            continue
+        iv = to_int(v)
+        if iv is None:
+            continue
+        injected_char_fields.append((k, iv))
+        injected_total_chars += iv
+
+    skills_entries = skills.get("entries") if isinstance(skills.get("entries"), list) else []
+    skills_count = to_int(skills.get("count"))
+    if skills_count is None:
+        skills_count = len(skills_entries)
+    skills_block_chars = 0
+    for e in skills_entries:
+        if not isinstance(e, dict):
+            continue
+        bc = to_int(e.get("blockChars"))
+        if bc is not None:
+            skills_block_chars += bc
+
+    referenced = memory.get("referencedPaths") if isinstance(memory.get("referencedPaths"), list) else []
+
+    return {
+        "text_len": to_int(request_meta.get("textLen")),
+        "history_count": to_int(request_meta.get("historyCount")),
+        "image_count": to_int(request_meta.get("imageCount")),
+        "injected_total_chars": injected_total_chars,
+        "injected_char_fields": sorted(injected_char_fields, key=lambda x: x[0]),
+        "skills_count": skills_count,
+        "skills_block_chars": skills_block_chars,
+        "memory_total_files": to_int(memory.get("totalFiles")),
+        "memory_referenced_paths": len(referenced),
+    }
+
+
 def main() -> None:
     args = parse_args()
     message_id = args.message_id.strip()
@@ -607,6 +712,10 @@ def main() -> None:
         )
     if timing.get("http_failed"):
         print(f"http failed: {timing['http_failed']['msg']}")
+    if timing.get("http_error_detail"):
+        print(f"http error detail: {timing['http_error_detail']['msg']}")
+    if timing.get("http_error_probe"):
+        print(f"http error probe: {timing['http_error_probe']['msg']}")
     if timing.get("http_reply"):
         print(f"http reply: {timing['http_reply']['msg']}")
     if route.startswith("HTTP"):
@@ -614,8 +723,55 @@ def main() -> None:
         if token_usage:
             joined = " ".join(f"{k}={v}" for k, v in sorted(token_usage.items()))
             print(f"http token usage: {joined}")
+            normalized = normalize_real_usage(token_usage)
+            real_bits = []
+            for k in [
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "cache_read_tokens",
+                "input_tokens",
+                "output_tokens",
+            ]:
+                if normalized.get(k) is not None:
+                    real_bits.append(f"{k}={normalized[k]}")
+            if real_bits:
+                print("real usage (normalized): " + " ".join(real_bits))
         else:
             print("http token usage: N/A (no usage/token fields found in logs or session custom data)")
+
+    print("\n== System Context ==")
+    dump_path = find_tool_schema_dump(logs_dir, message_id)
+    if not dump_path:
+        print("tool schema dump: not found")
+    else:
+        print(f"tool schema dump: {dump_path}")
+        try:
+            dump = read_json(dump_path)
+            ctx = summarize_system_context(dump if isinstance(dump, dict) else {})
+            print(
+                "request meta: "
+                f"textLen={ctx['text_len'] if ctx['text_len'] is not None else 'N/A'} "
+                f"historyCount={ctx['history_count'] if ctx['history_count'] is not None else 'N/A'} "
+                f"imageCount={ctx['image_count'] if ctx['image_count'] is not None else 'N/A'}"
+            )
+            print(
+                "injected context chars: "
+                f"total={ctx['injected_total_chars']} "
+                + " ".join(f"{k}={v}" for k, v in ctx["injected_char_fields"])
+            )
+            print(
+                "skills context: "
+                f"count={ctx['skills_count'] if ctx['skills_count'] is not None else 'N/A'} "
+                f"blockChars={ctx['skills_block_chars']}"
+            )
+            print(
+                "memory preflight: "
+                f"totalFiles={ctx['memory_total_files'] if ctx['memory_total_files'] is not None else 'N/A'} "
+                f"referencedPaths={ctx['memory_referenced_paths']}"
+            )
+        except Exception as e:
+            print(f"failed to read system context dump: {e}")
 
     print("\n== Main Log Timeline ==")
     if not log_lines:

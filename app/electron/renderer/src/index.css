@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -20,4 +24,51 @@ body {
 ::-webkit-scrollbar-thumb {
   background: #ddd;
   border-radius: 3px;
+}
+
+.chat-markdown pre code,
+.chat-markdown pre .hljs,
+.chat-markdown pre .hljs * {
+  color: #fff !important;
+}
+
+.chat-markdown .hljs {
+  color: #e5e7eb;
+  background: transparent;
+}
+
+.chat-markdown .hljs-comment,
+.chat-markdown .hljs-quote {
+  color: #94a3b8;
+}
+
+.chat-markdown .hljs-keyword,
+.chat-markdown .hljs-selector-tag,
+.chat-markdown .hljs-literal,
+.chat-markdown .hljs-name {
+  color: #f472b6;
+}
+
+.chat-markdown .hljs-string,
+.chat-markdown .hljs-attr,
+.chat-markdown .hljs-template-tag {
+  color: #86efac;
+}
+
+.chat-markdown .hljs-number,
+.chat-markdown .hljs-symbol,
+.chat-markdown .hljs-bullet {
+  color: #fbbf24;
+}
+
+.chat-markdown .hljs-title,
+.chat-markdown .hljs-section,
+.chat-markdown .hljs-selector-id {
+  color: #93c5fd;
+}
+
+.chat-markdown .hljs-built_in,
+.chat-markdown .hljs-type,
+.chat-markdown .hljs-class {
+  color: #67e8f9;
 }

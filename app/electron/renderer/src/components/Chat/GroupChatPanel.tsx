@@ -68,7 +68,7 @@ function makeCodeComponents(workerId?: string) {
           <span
             className={styles.fileLink}
             onClick={() => void workerOpenFileLocation(workerId, text)}
-            title={`打开目录: ${text}`}
+            title={`定位文件: ${text}`}
           >
             <code className={styles.fileLinkCode}>{children}</code>
             <span className={styles.fileLinkIcon}>📂</span>

@@ -10,7 +10,7 @@ export function useChat() {
   const currentWorkerId = useChatStore((s) => s.currentWorkerId);
   const messagesMap = useChatStore((s) => s.messages);
   const sendingMap = useChatStore((s) => s.sending);
-  const { pushMessage, updateLastMessage, appendToLastMessage, setSending } = useChatStore();
+  const { pushMessage, updateMessageById, appendToLastMessage, setSending } = useChatStore();
 
   useEffect(() => {
     return onChatChunk(({ workerId, chunk }) => {
@@ -47,10 +47,10 @@ export function useChat() {
 
     try {
       const res = await chatSend(workerId, trimmed, picked, history, msgId);
-      updateLastMessage(workerId, res.reply || '(无回复)');
+      updateMessageById(workerId, msgId, res.reply || '(无回复)');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      updateLastMessage(workerId, `调用失败: ${msg}`);
+      updateMessageById(workerId, msgId, `调用失败: ${msg}`);
     } finally {
       setSending(workerId, false);
     }

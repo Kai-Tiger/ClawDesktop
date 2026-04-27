@@ -7,6 +7,7 @@ import {
   workerListSkills,
   chatSend,
   workerGetInternZipPath,
+  workerGetBlankZipPath,
   workerExport,
   workerReadSkill,
   workerSaveSkill,
@@ -64,6 +65,8 @@ export function WorkerList({
   const [editWorkerDesc, setEditWorkerDesc] = useState("");
   const [savingWorkerMeta, setSavingWorkerMeta] = useState(false);
   const [workerMetaError, setWorkerMetaError] = useState("");
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const createMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     workers
@@ -76,6 +79,19 @@ export function WorkerList({
           .catch(() => {});
       });
   }, [workers]);
+
+  useEffect(() => {
+    if (!showCreateMenu) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!createMenuRef.current?.contains(target)) {
+        setShowCreateMenu(false);
+      }
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [showCreateMenu]);
 
   async function handleImportClick() {
     if (probing) return;
@@ -93,8 +109,25 @@ export function WorkerList({
     }
   }
 
-  async function handleCreateClick() {
+  async function handleCreateBlankClick() {
     if (probing) return;
+    setShowCreateMenu(false);
+    setProbeError("");
+    setProbing(true);
+    try {
+      const zipPath = await workerGetBlankZipPath();
+      const result = await workerProbeZip(zipPath);
+      setProbe(result);
+    } catch {
+      setProbeError("读取 blank.zip 失败");
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  async function handleCreateInternClick() {
+    if (probing) return;
+    setShowCreateMenu(false);
     setProbeError("");
     setProbing(true);
     try {
@@ -388,16 +421,31 @@ export function WorkerList({
       )}
 
       <div className={styles.btnRow}>
-        <div className={styles.createBtnWrap}>
+        <div className={styles.createBtnWrap} ref={createMenuRef}>
           <button
             className={styles.importBtn}
-            onClick={handleCreateClick}
+            onClick={() => setShowCreateMenu((v) => !v)}
             disabled={probing}
           >
             {probing ? "读取中…" : "+ 新建"}
           </button>
-          <div className={styles.createTooltip}>
-            新增一个agent，包含系统skill
+          <div
+            className={`${styles.createMenu} ${showCreateMenu ? styles.createMenuVisible : ""}`}
+          >
+            <button
+              className={styles.createMenuItem}
+              onClick={() => void handleCreateBlankClick()}
+              disabled={probing}
+            >
+              空白 Worker
+            </button>
+            <button
+              className={styles.createMenuItem}
+              onClick={() => void handleCreateInternClick()}
+              disabled={probing}
+            >
+              Intern Worker
+            </button>
           </div>
         </div>
         <button
