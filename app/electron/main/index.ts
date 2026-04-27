@@ -359,7 +359,17 @@ class OpenClawService {
       `- Never access sibling workspaces under ${parentDir}`,
       '- Never use ~/.openclaw paths or parent-directory traversal to find files.',
       '- Only operate on absolute paths that start with the allowed root.',
+      '- In shell commands, any path containing spaces must be wrapped in double quotes.',
       '- If path scope is unclear, ask for an explicit absolute path first.',
+    ].join('\n');
+
+    const shellPathSafetyOverride = [
+      '',
+      '## Shell Path Safety (Clawin Desktop)',
+      '- Paths under `/Users/likai.lear/Library/Application Support/Clawin Desktop/...` contain spaces.',
+      '- In all shell commands, wrap every path containing spaces with double quotes.',
+      '- Example (correct): `python "/Users/likai.lear/Library/Application Support/Clawin Desktop/runtime/openclaw-home/.openclaw/workspace-target/test.py"`',
+      '- Example (wrong): `python /Users/likai.lear/Library/Application Support/Clawin Desktop/runtime/openclaw-home/.openclaw/workspace-target/test.py`',
     ].join('\n');
 
     // agent 定义文件（由 app 管理，始终覆写）
@@ -370,7 +380,11 @@ class OpenClawService {
         try {
           const content = fs.readFileSync(src, 'utf8');
           const normalized = normalizeLegacyPaths(content);
-          const withOverride = f === 'USER.md' ? `${normalized}\n${localPathOverride}\n` : normalized;
+          const withOverride = f === 'USER.md'
+            ? `${normalized}\n${localPathOverride}\n`
+            : f === 'TOOLS.md'
+              ? `${normalized}\n${shellPathSafetyOverride}\n`
+              : normalized;
           fs.writeFileSync(dst, withOverride, 'utf8');
         } catch {
           fs.copyFileSync(src, dst);

@@ -15,6 +15,7 @@ export interface ChatMessage {
   role: Role;
   content: MessageContent;
   timestamp?: number;
+  completedAt?: number;
   msgId?: string;
 }
 

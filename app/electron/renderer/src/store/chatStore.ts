@@ -71,7 +71,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   updateLastMessage: (workerId, content) =>
     set((state) => {
       const list = [...(state.messages[workerId] ?? [])];
-      if (list.length > 0) list[list.length - 1] = { ...list[list.length - 1], content };
+      if (list.length > 0) list[list.length - 1] = { ...list[list.length - 1], content, completedAt: Date.now() };
       return { messages: { ...state.messages, [workerId]: list } };
     }),
 
