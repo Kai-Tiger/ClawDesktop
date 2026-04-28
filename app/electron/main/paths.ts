@@ -8,7 +8,7 @@ export class OpenClawPaths {
   readonly runtimeVersion = '0.2.0';
   readonly httpTimeoutMs = 600000;
   readonly cliTimeoutMs = 600000;
-  readonly deniedSubagentTools = ['sessions_spawn'];
+  readonly deniedSubagentTools = ['sessions_spawn', 'cron'];
   gatewayPort = 18789;
 
   get isDev() {

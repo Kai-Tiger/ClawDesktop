@@ -291,13 +291,6 @@ export class ChatService {
     onLog?: (step: string) => void,
     traceId?: string
   ): Promise<string> {
-    const soul   = this.paths.readWorkerFile(promptContextPath, 'SOUL.md');
-    const agents = this.paths.readWorkerFile(promptContextPath, 'AGENTS.md');
-    const systemContent = [
-      soul   && `# Soul\n${soul}`,
-      agents && `# Workspace\n${agents}`,
-    ].filter(Boolean).join('\n\n');
-
     const userContent: MessageContent = images.length === 0
       ? message
       : [
@@ -306,7 +299,6 @@ export class ChatService {
         ];
 
     const messages = [
-      ...(systemContent ? [{ role: 'system', content: systemContent }] : []),
       ...history.map((item) => ({ role: item.role, content: this.toOpenAIContent(item.content) })),
       { role: 'user', content: this.toOpenAIContent(userContent) },
     ];
