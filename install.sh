@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+rm -rf runtime/
 mkdir runtime
 # Install Node.js
 curl -fSL --progress-bar https://nodejs.org/dist/v24.13.1/node-v24.13.1-darwin-arm64.tar.gz | tar xz -C runtime/ && mv runtime/node-v24.13.1-darwin-arm64 runtime/node
