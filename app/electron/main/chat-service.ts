@@ -332,6 +332,9 @@ export class ChatService {
     if (gatewayToken) {
       headers['Authorization'] = `Bearer ${gatewayToken}`;
     }
+    if (traceId) {
+      headers['x-openclaw-trace-id'] = traceId;
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.paths.httpTimeoutMs);
     let res: Response;
