@@ -51,56 +51,147 @@ export class ChatService {
     });
   }
 
-  private extractReplyText(json: unknown): string {
+  private summarizeMessageContent(content: MessageContent): string {
+    if (typeof content === 'string') return content;
+    return content
+      .map((block) => {
+        if (block.type === 'text') return block.text;
+        return `[image:${block.mediaType},size=${block.data.length}]`;
+      })
+      .join('\n')
+      .trim();
+  }
+
+  private parseDataUrl(url: string): { mediaType: string; data: string } | null {
+    const match = url.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=_-]+)$/);
+    if (!match) return null;
+    const mediaType = match[1] || 'image/png';
+    const data = match[2] || '';
+    if (!mediaType.startsWith('image/') || !data) return null;
+    return { mediaType, data };
+  }
+
+  private async imageUrlToBlock(url: string): Promise<MessageContentBlock | null> {
+    if (!url || typeof url !== 'string') return null;
+    const dataUrl = this.parseDataUrl(url);
+    if (dataUrl) {
+      return { type: 'image', mediaType: dataUrl.mediaType, data: dataUrl.data };
+    }
+    if (!/^https?:\/\//i.test(url)) return null;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const mediaType = (res.headers.get('content-type') || '').split(';')[0].trim() || 'image/png';
+      if (!mediaType.startsWith('image/')) return null;
+      const buf = Buffer.from(await res.arrayBuffer());
+      return { type: 'image', mediaType, data: buf.toString('base64') };
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizeReplyBlocks(blocks: MessageContentBlock[]): MessageContent {
+    const normalized = blocks.filter((block) => block.type === 'image' || block.text.trim().length > 0);
+    if (normalized.length === 0) return '';
+    const hasImage = normalized.some((b) => b.type === 'image');
+    if (!hasImage && normalized.every((b) => b.type === 'text')) {
+      return normalized.map((b) => b.type === 'text' ? b.text : '').join('\n').trim();
+    }
+    return normalized;
+  }
+
+  private async extractReplyContent(json: unknown): Promise<MessageContent> {
     if (!json || typeof json !== 'object') return '';
     const root = json as {
       choices?: Array<{ message?: { content?: unknown; text?: unknown }; delta?: { content?: unknown }; text?: unknown }>;
       output_text?: unknown;
-      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }>; text?: string }>;
+      output?: Array<{ type?: string; content?: unknown; text?: unknown; image_url?: unknown; b64_json?: unknown }>;
     };
 
     if (typeof root.output_text === 'string' && root.output_text.trim()) {
       return root.output_text;
     }
 
+    const blocks: MessageContentBlock[] = [];
+    const pushText = (text: unknown) => {
+      if (typeof text !== 'string') return;
+      blocks.push({ type: 'text', text });
+    };
+    const pushImageUrl = async (url: unknown) => {
+      if (typeof url !== 'string') return;
+      const imageBlock = await this.imageUrlToBlock(url);
+      if (imageBlock) blocks.push(imageBlock);
+    };
+    const pushImageBase64 = (data: unknown, mediaType: unknown) => {
+      if (typeof data !== 'string' || !data.trim()) return;
+      const type = typeof mediaType === 'string' && mediaType.startsWith('image/') ? mediaType : 'image/png';
+      blocks.push({ type: 'image', mediaType: type, data });
+    };
+
+    const parseContentArray = async (arr: unknown[]) => {
+      for (const block of arr) {
+        if (!block || typeof block !== 'object') continue;
+        const entry = block as Record<string, unknown>;
+        const entryType = typeof entry.type === 'string' ? entry.type : '';
+        if (entryType === 'text' || entryType === 'output_text' || entryType === 'input_text') {
+          pushText(entry.text);
+          continue;
+        }
+        if (entryType === 'image_url') {
+          if (entry.image_url && typeof entry.image_url === 'object') {
+            await pushImageUrl((entry.image_url as Record<string, unknown>).url);
+          }
+          await pushImageUrl(entry.url);
+          continue;
+        }
+        if (entryType === 'image') {
+          pushImageBase64(entry.b64_json ?? entry.data, entry.media_type ?? entry.mediaType ?? entry.mime_type);
+          if (entry.image_url && typeof entry.image_url === 'object') {
+            await pushImageUrl((entry.image_url as Record<string, unknown>).url);
+          }
+          await pushImageUrl(entry.url);
+          continue;
+        }
+        if (typeof entry.text === 'string') pushText(entry.text);
+        if (entry.image_url && typeof entry.image_url === 'object') {
+          await pushImageUrl((entry.image_url as Record<string, unknown>).url);
+        }
+        await pushImageUrl(entry.url);
+        pushImageBase64(entry.b64_json, entry.media_type ?? entry.mediaType ?? entry.mime_type);
+      }
+    };
+
     const messageContent = root.choices?.[0]?.message?.content;
     if (typeof messageContent === 'string' && messageContent.trim()) {
       return messageContent;
     }
     if (Array.isArray(messageContent)) {
-      const text = messageContent
-        .map((block) => {
-          if (!block || typeof block !== 'object') return '';
-          const entry = block as Record<string, unknown>;
-          if (typeof entry.text === 'string') return entry.text;
-          return '';
-        })
-        .filter(Boolean)
-        .join('\n')
-        .trim();
-      if (text) return text;
+      await parseContentArray(messageContent);
+    }
+
+    if (Array.isArray(root.output)) {
+      for (const item of root.output) {
+        if (!item || typeof item !== 'object') continue;
+        const entry = item as Record<string, unknown>;
+        pushText(entry.text);
+        if (Array.isArray(entry.content)) {
+          await parseContentArray(entry.content);
+        }
+        if (entry.image_url && typeof entry.image_url === 'object') {
+          await pushImageUrl((entry.image_url as Record<string, unknown>).url);
+        }
+        await pushImageUrl(entry.url);
+        pushImageBase64(entry.b64_json, entry.media_type ?? entry.mediaType ?? entry.mime_type);
+      }
+    }
+
+    if (blocks.length > 0) {
+      return this.normalizeReplyBlocks(blocks);
     }
 
     const choiceText = root.choices?.[0]?.message?.text ?? root.choices?.[0]?.text ?? root.choices?.[0]?.delta?.content;
     if (typeof choiceText === 'string' && choiceText.trim()) {
       return choiceText;
-    }
-
-    if (Array.isArray(root.output)) {
-      const text = root.output
-        .map((item) => {
-          if (!item || typeof item !== 'object') return '';
-          if (typeof item.text === 'string') return item.text;
-          if (!Array.isArray(item.content)) return '';
-          return item.content
-            .map((c) => (c && typeof c.text === 'string' ? c.text : ''))
-            .filter(Boolean)
-            .join('\n');
-        })
-        .filter(Boolean)
-        .join('\n')
-        .trim();
-      if (text) return text;
     }
 
     return '';
@@ -147,6 +238,137 @@ export class ChatService {
       `hasOutputText=${typeof root.output_text === 'string'}`,
       `usage=${usagePayload}`,
     ].join(' ');
+  }
+
+  private flattenNumericFields(obj: unknown, prefix = ''): Record<string, number> {
+    const out: Record<string, number> = {};
+    if (obj === null || obj === undefined) return out;
+
+    if (typeof obj === 'number' && Number.isFinite(obj)) {
+      if (prefix) out[prefix] = Math.trunc(obj);
+      return out;
+    }
+    if (typeof obj === 'string') {
+      const trimmed = obj.trim();
+      if (!trimmed) return out;
+      const parsed = Number(trimmed);
+      if (Number.isFinite(parsed) && prefix) out[prefix] = Math.trunc(parsed);
+      return out;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach((item, idx) => {
+        const key = prefix ? `${prefix}[${idx}]` : `[${idx}]`;
+        Object.assign(out, this.flattenNumericFields(item, key));
+      });
+      return out;
+    }
+    if (typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        const key = prefix ? `${prefix}.${k}` : k;
+        Object.assign(out, this.flattenNumericFields(v, key));
+      }
+      return out;
+    }
+    return out;
+  }
+
+  private pickMetricWithSource(flat: Record<string, number>, rules: Array<(pathLc: string) => number>): { value: number | null; source: string | null } {
+    let bestScore = 0;
+    let bestSource: string | null = null;
+    let bestValue: number | null = null;
+    for (const [path, value] of Object.entries(flat)) {
+      const pathLc = path.toLowerCase();
+      let score = 0;
+      for (const rule of rules) {
+        try {
+          score = Math.max(score, Number(rule(pathLc)) || 0);
+        } catch {
+          // ignore bad rule
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestSource = path;
+        bestValue = value;
+      }
+    }
+    if (bestScore <= 0) return { value: null, source: null };
+    return { value: bestValue, source: bestSource };
+  }
+
+  private inferWorkerIdFromGatewayModel(gatewayModel: string): string | null {
+    const trimmed = (gatewayModel || '').trim();
+    if (!trimmed.includes('/')) return null;
+    const parts = trimmed.split('/').filter(Boolean);
+    return parts.length > 1 ? parts[1] : null;
+  }
+
+  private buildRuntimeUsageByTraceRecord(params: {
+    traceId?: string;
+    gatewayModel: string;
+    configuredModel: string;
+    message: string;
+    historyCount: number;
+    imageCount: number;
+    responseJson: unknown;
+  }): Record<string, unknown> {
+    const { traceId, gatewayModel, configuredModel, message, historyCount, imageCount, responseJson } = params;
+    const root = responseJson && typeof responseJson === 'object' ? (responseJson as Record<string, unknown>) : {};
+    const usage = root.usage && typeof root.usage === 'object' ? (root.usage as Record<string, unknown>) : {};
+    const flat = this.flattenNumericFields(root);
+
+    const systemPromptChars = this.pickMetricWithSource(flat, [
+      (p) => (p.includes('systemprompt.chars') ? 100 : 0),
+      (p) => (p.includes('system_prompt') && p.endsWith('chars') ? 90 : 0),
+    ]);
+    const projectContextChars = this.pickMetricWithSource(flat, [
+      (p) => (p.includes('projectcontextchars') && !p.includes('nonprojectcontextchars') ? 100 : 0),
+    ]);
+    const nonProjectContextChars = this.pickMetricWithSource(flat, [
+      (p) => (p.includes('nonprojectcontextchars') ? 100 : 0),
+    ]);
+    const toolsSchemaChars = this.pickMetricWithSource(flat, [
+      (p) => (p.includes('tools.schemachars') ? 100 : 0),
+      (p) => (p.includes('tool') && p.includes('schemachars') ? 80 : 0),
+    ]);
+    const skillsPromptChars = this.pickMetricWithSource(flat, [
+      (p) => (p.includes('skills.promptchars') ? 100 : 0),
+      (p) => (p.includes('skill') && p.includes('promptchars') ? 80 : 0),
+    ]);
+    const userTextChars = this.pickMetricWithSource(flat, [
+      (p) => (p.includes('usertextchars') ? 100 : 0),
+      (p) => (p.endsWith('requestmeta.textlen') ? 80 : 0),
+    ]);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      source: 'chatHttp.runtime',
+      traceId: traceId || null,
+      workerId: this.inferWorkerIdFromGatewayModel(gatewayModel),
+      gatewayModel,
+      configuredModel,
+      runId: typeof root.id === 'string' ? root.id : null,
+      requestMeta: {
+        textLen: message.length,
+        historyCount,
+        imageCount,
+      },
+      usage,
+      promptReport: {
+        userTextChars: userTextChars.value,
+        userTextCharsSource: userTextChars.source,
+        systemPromptChars: systemPromptChars.value,
+        systemPromptCharsSource: systemPromptChars.source,
+        projectContextChars: projectContextChars.value,
+        projectContextCharsSource: projectContextChars.source,
+        nonProjectContextChars: nonProjectContextChars.value,
+        nonProjectContextCharsSource: nonProjectContextChars.source,
+        toolsSchemaChars: toolsSchemaChars.value,
+        toolsSchemaCharsSource: toolsSchemaChars.source,
+        skillsPromptChars: skillsPromptChars.value,
+        skillsPromptCharsSource: skillsPromptChars.source,
+      },
+    };
   }
 
   private buildHttpPreflightDump(
@@ -290,7 +512,7 @@ export class ChatService {
     history: MessageItem[],
     onLog?: (step: string) => void,
     traceId?: string
-  ): Promise<string> {
+  ): Promise<MessageContent> {
     const userContent: MessageContent = images.length === 0
       ? message
       : [
@@ -365,10 +587,21 @@ export class ChatService {
     }
 
     const json = await res.json() as unknown;
+    const runtimeUsageRecord = this.buildRuntimeUsageByTraceRecord({
+      traceId,
+      gatewayModel,
+      configuredModel,
+      message,
+      historyCount: history.length,
+      imageCount: images.length,
+      responseJson: json,
+    });
+    this.paths.writeGatewayRuntimeUsageByTrace(runtimeUsageRecord, traceId);
     onLog?.(`resp shape ${this.summarizeResponseShape(json)}`);
-    const content = this.extractReplyText(json) || '(无回复内容)';
-    onLog?.(`reply len=${content.length}`);
-    return content;
+    const content = await this.extractReplyContent(json);
+    const text = this.summarizeMessageContent(content) || '(无回复内容)';
+    onLog?.(`reply len=${text.length}`);
+    return content || '(无回复内容)';
   }
 
   private chatCliAgent(
@@ -634,8 +867,9 @@ export class ChatService {
           (step) => log(`HTTP ${step}`),
           traceId
         );
-        log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
-        return { code: 0, stdout: reply, stderr: '', cmd: `POST /v1/chat/completions`, reply };
+        const replyText = this.summarizeMessageContent(reply) || '(无回复内容)';
+        log(`DONE reply-len=${replyText.length} total=${Date.now() - t0}ms`);
+        return { code: 0, stdout: replyText, stderr: '', cmd: `POST /v1/chat/completions`, reply };
       } catch (httpErr) {
         log(`HTTP-agent${hasImages ? '-vision' : ''} failed: ${httpErr}`);
         markTimeoutNotice(httpErr, 'HTTP-agent ');
@@ -671,8 +905,9 @@ export class ChatService {
           (step) => log(`HTTP ${step}`),
           traceId
         );
-        log(`DONE reply-len=${reply.length} total=${Date.now() - t0}ms`);
-        return { code: 0, stdout: reply, stderr: '', cmd: `POST /v1/chat/completions`, reply };
+        const replyText = this.summarizeMessageContent(reply) || '(无回复内容)';
+        log(`DONE reply-len=${replyText.length} total=${Date.now() - t0}ms`);
+        return { code: 0, stdout: replyText, stderr: '', cmd: `POST /v1/chat/completions`, reply };
       } catch (httpErr) {
         log(`HTTP failed: ${httpErr}`);
         markTimeoutNotice(httpErr, 'HTTP ');

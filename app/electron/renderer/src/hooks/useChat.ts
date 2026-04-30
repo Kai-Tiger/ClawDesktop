@@ -47,7 +47,8 @@ export function useChat() {
 
     try {
       const res = await chatSend(workerId, trimmed, picked, history, msgId);
-      updateMessageById(workerId, msgId, res.reply || '(无回复)');
+      const reply = typeof res.reply === 'string' && !res.reply.trim() ? '(无回复)' : res.reply;
+      updateMessageById(workerId, msgId, reply);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       updateMessageById(workerId, msgId, `调用失败: ${msg}`);

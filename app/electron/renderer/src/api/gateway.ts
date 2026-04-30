@@ -19,7 +19,7 @@ import type {
 
 interface ChatHistory {
   messages: Record<string, { role: string; content: MessageContent }[]>;
-  groupMessages: Record<string, { id: string; role: string; workerId?: string; workerName?: string; content: string }[]>;
+  groupMessages: Record<string, { id: string; role: string; workerId?: string; workerName?: string; content: MessageContent }[]>;
 }
 
 interface GatewayApi {
@@ -55,6 +55,7 @@ interface GatewayApi {
   workerOpenOpenClawDir: () => Promise<string>;
   workerOpenWorkerDir: (workerId: string) => Promise<string>;
   workerOpenFileLocation: (workerId: string, filePath: string) => Promise<string>;
+  traceMessageChain: (messageId: string) => Promise<{ output: string; missingPython?: boolean }>;
   workerUpdateMeta: (workerId: string, name: string, description: string) => Promise<{ ok: boolean; error?: string }>;
   getModel: () => Promise<string>;
   setModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
@@ -113,6 +114,7 @@ export const openDashboard = () => api().openDashboard();
 export const workerOpenOpenClawDir = () => api().workerOpenOpenClawDir();
 export const workerOpenWorkerDir = (workerId: string) => api().workerOpenWorkerDir(workerId);
 export const workerOpenFileLocation = (workerId: string, filePath: string) => api().workerOpenFileLocation(workerId, filePath);
+export const traceMessageChain = (messageId: string) => api().traceMessageChain(messageId);
 export const workerUpdateMeta = (workerId: string, name: string, description: string) => api().workerUpdateMeta(workerId, name, description);
 export const getModel = () => api().getModel();
 export const setModel = (model: string) => api().setModel(model);

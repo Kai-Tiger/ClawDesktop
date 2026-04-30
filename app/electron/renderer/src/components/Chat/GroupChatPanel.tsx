@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useChatStore } from '../../store/chatStore';
 import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, workerOpenFileLocation, openLogsDir } from '../../api/gateway';
-import type { GroupMessage, WorkerMeta, CoordinatorPlan } from '../../types';
+import type { GroupMessage, WorkerMeta, CoordinatorPlan, MessageContent, ContentBlock } from '../../types';
 import styles from './GroupChatPanel.module.css';
 
 const PALETTE = ['#5b8cff', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -56,6 +56,36 @@ function perfLog(traceId: string, step: string, extra?: string) {
 
 function stripDirectiveTags(text: string): string {
   return text.replace(/\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+|audio_as_voice)\s*\]\]/gi, '').trim();
+}
+
+function isThinkingGroupContent(content: MessageContent): boolean {
+  return typeof content === 'string' && content === '思考中...';
+}
+
+function toPlainText(content: MessageContent): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => (block.type === 'text' ? block.text : `[图片:${block.mediaType}]`))
+    .join('\n');
+}
+
+function stripDirectiveTagsInContent(content: MessageContent): MessageContent {
+  if (typeof content === 'string') return stripDirectiveTags(content);
+  const blocks: ContentBlock[] = content.map((block) =>
+    block.type === 'text' ? { ...block, text: stripDirectiveTags(block.text) } : block
+  );
+  const hasImage = blocks.some((block) => block.type === 'image');
+  const textBlocks = blocks.filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text');
+  if (!hasImage) {
+    return textBlocks.map((block) => block.text).join('\n').trim();
+  }
+  return blocks.filter((block) => block.type === 'image' || block.text.trim().length > 0);
+}
+
+function withWorkerPrefix(workerName: string | undefined, content: MessageContent): MessageContent {
+  const prefix = `[${workerName || 'worker'}]: `;
+  if (typeof content === 'string') return `${prefix}${content}`;
+  return [{ type: 'text', text: prefix }, ...content];
 }
 
 function makeCodeComponents(workerId?: string) {
@@ -121,10 +151,10 @@ export function GroupChatPanel() {
 
   const buildHistory = (gid: string) =>
     (useChatStore.getState().groupMessages[gid] ?? [])
-      .filter((m) => m.content !== '思考中...' && m.role !== 'system')
+      .filter((m) => !isThinkingGroupContent(m.content) && m.role !== 'system')
       .map((m) => ({
         role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.role === 'worker' ? `[${m.workerName}]: ${m.content}` : m.content,
+        content: m.role === 'worker' ? withWorkerPrefix(m.workerName, m.content) : m.content,
       }));
 
   const enqueue = (params: {
@@ -149,10 +179,10 @@ export function GroupChatPanel() {
         const t0 = Date.now();
         perfLog(msgId, 'IPC-send', `worker=${worker.id} msgLen=${text.length} historyLen=${history.length}`);
         const result = await chatSend(worker.id, text, undefined, history, msgId, gid);
-        const reply = stripDirectiveTags(result.reply);
-        perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${reply.length}`);
+        const reply = stripDirectiveTagsInContent(result.reply);
+        perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
         useChatStore.getState().updateGroupMessage(gid, placeholderId, reply);
-        console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel}: ${reply}`);
+        console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel}: ${toPlainText(reply)}`);
       } catch (err) {
         useChatStore.getState().updateGroupMessage(gid, placeholderId, '(发送失败)');
         console.error(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel} 失败:`, err);
@@ -296,9 +326,9 @@ export function GroupChatPanel() {
               const t0 = Date.now();
               perfLog(msgId, 'IPC-send', `task=${task.id} worker=${worker.id} msgLen=${fullMessage.length} historyLen=${history.length}`);
               const result = await chatSend(worker.id, fullMessage, undefined, history, msgId, gid);
-              const reply = stripDirectiveTags(result.reply);
-              perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${reply.length}`);
-              results.set(task.id, reply);
+              const reply = stripDirectiveTagsInContent(result.reply);
+              perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
+              results.set(task.id, toPlainText(reply));
               useChatStore.getState().updateGroupMessage(gid, pid, reply);
             } catch {
               useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)');
@@ -387,8 +417,8 @@ export function GroupChatPanel() {
         const t0 = Date.now();
         perfLog(msgId, 'IPC-send', `worker=${worker.id} msgLen=${prompt.length} historyLen=${history.length}`);
         return chatSend(worker.id, prompt, undefined, history, msgId, gid).then((result) => {
-          const reply = stripDirectiveTags(result.reply);
-          perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${reply.length}`);
+          const reply = stripDirectiveTagsInContent(result.reply);
+          perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
           useChatStore.getState().updateGroupMessage(gid, pid, reply);
         }).catch(() => {
           useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)');
@@ -560,12 +590,12 @@ export function GroupChatPanel() {
         )}
         {messages.map((msg) =>
           msg.role === 'system' ? (
-            <div key={msg.id} className={styles.systemMsg}>{msg.content}</div>
+            <div key={msg.id} className={styles.systemMsg}>{toPlainText(msg.content)}</div>
           ) : msg.role === 'debug' ? (
             debugMode ? (
               <div key={msg.id} className={styles.debugMsg}>
                 <span className={styles.debugMsgLabel}>调试</span>
-                <pre className={styles.debugMsgContent}>{msg.content}</pre>
+                <pre className={styles.debugMsgContent}>{toPlainText(msg.content)}</pre>
               </div>
             ) : null
           ) : (
@@ -582,13 +612,37 @@ export function GroupChatPanel() {
                   </span>
                 </div>
               )}
-              <div className={`${styles.bubble} ${msg.content === '思考中...' ? styles.thinking : ''}`}>
-                {msg.content === '思考中...' ? msg.content : (
-                  <div className={styles.markdown}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={makeCodeComponents(msg.workerId)}>
-                      {normalizeNewlines(msg.content)}
-                    </ReactMarkdown>
-                  </div>
+              <div className={`${styles.bubble} ${isThinkingGroupContent(msg.content) ? styles.thinking : ''}`}>
+                {isThinkingGroupContent(msg.content) ? msg.content : (
+                  typeof msg.content === 'string' ? (
+                    <div className={styles.markdown}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={makeCodeComponents(msg.workerId)}>
+                        {normalizeNewlines(msg.content)}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {msg.content.map((block, idx) => {
+                        if (block.type === 'text') {
+                          return (
+                            <div key={`t-${msg.id}-${idx}`} className={styles.markdown}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={makeCodeComponents(msg.workerId)}>
+                                {normalizeNewlines(block.text)}
+                              </ReactMarkdown>
+                            </div>
+                          );
+                        }
+                        return (
+                          <img
+                            key={`i-${msg.id}-${idx}`}
+                            src={`data:${block.mediaType};base64,${block.data}`}
+                            alt="群聊生成图片"
+                            style={{ maxHeight: 240, maxWidth: 'min(320px, 85vw)', borderRadius: 10, border: '1px solid #d5dbe8', background: '#fff', objectFit: 'contain' }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )
                 )}
                 {msg.role === 'worker' && msg.msgId && (
                   <div className={styles.msgIdTag}>{msg.msgId}</div>

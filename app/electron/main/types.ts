@@ -6,7 +6,7 @@ export type GatewayStatus = {
   service: { loaded: boolean; runtime: { status: string; missingUnit?: boolean } };
   logFile: string;
 };
-export type ChatResult = ExecResult & { reply: string };
+export type ChatResult = ExecResult & { reply: MessageContent };
 export type WorkerMeta = { id: string; name: string; description?: string; path: string; mode?: string };
 export type SaveKeyResult = { ok: boolean; detail: ExecResult; modelDetail: ExecResult };
 export type SkillMeta = { id?: string; name: string; description: string };

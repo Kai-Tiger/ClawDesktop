@@ -169,7 +169,8 @@ export function WorkerList({
         undefined,
         [],
       );
-      updateLastMessage(workerId, res.reply || "你好，我已准备好为你服务。");
+      const reply = typeof res.reply === "string" && !res.reply.trim() ? "你好，我已准备好为你服务。" : res.reply;
+      updateLastMessage(workerId, reply);
     } catch {
       updateLastMessage(workerId, "你好，我已准备好为你服务。");
     }

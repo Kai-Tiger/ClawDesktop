@@ -43,7 +43,7 @@ export interface GatewayStatus {
 }
 
 export interface ChatResult extends ExecResult {
-  reply: string;
+  reply: MessageContent;
 }
 
 export interface SaveKeyResult {
@@ -121,7 +121,7 @@ export interface GroupMessage {
   role: 'user' | 'worker' | 'system' | 'debug';
   workerId?: string;
   workerName?: string;
-  content: string;
+  content: MessageContent;
 }
 
 export interface CoordinatorTask {

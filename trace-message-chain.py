@@ -13,6 +13,9 @@ LOG_LINE_RE = re.compile(
     r'^(?P<ts>\S+)\s+\[chat:(?P<worker>[^\]]+)\]\[(?P<trace>[^\]]+)\]\s+\+(?P<ms>\d+)ms\s+(?P<msg>.*)$'
 )
 
+ANSI_BOLD_RED = "\033[1;31m"
+ANSI_RESET = "\033[0m"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -584,6 +587,77 @@ def find_tool_schema_dump(logs_dir: str, trace_id: str) -> Optional[str]:
     return None
 
 
+def find_runtime_usage_by_trace(logs_dir: str, openclaw_root: str, trace_id: str, run_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    specific = os.path.join(logs_dir, f"gateway-runtime-usage-{trace_id}.json")
+    specific_obj: Optional[Dict[str, Any]] = None
+    if os.path.exists(specific):
+        try:
+            obj = read_json(specific)
+            if isinstance(obj, dict):
+                specific_obj = obj
+        except Exception:
+            pass
+
+    local_jsonl_path = os.path.join(logs_dir, "gateway-runtime-usage-by-trace.jsonl")
+    runtime_jsonl_path = os.path.join(openclaw_root, "logs", "gateway-runtime-usage.jsonl")
+
+    def score_obj(obj: Dict[str, Any]) -> int:
+        score = 0
+        if str(obj.get("traceId") or "") == trace_id:
+            score += 100
+        if run_id and str(obj.get("runId") or "") == run_id:
+            score += 40
+        spr = obj.get("systemPromptReport")
+        if isinstance(spr, dict):
+            score += 40
+            skills = spr.get("skills") if isinstance(spr.get("skills"), dict) else {}
+            tools = spr.get("tools") if isinstance(spr.get("tools"), dict) else {}
+            sp = spr.get("systemPrompt") if isinstance(spr.get("systemPrompt"), dict) else {}
+            if to_int(skills.get("promptChars")) is not None:
+                score += 20
+            if to_int(tools.get("schemaChars")) is not None:
+                score += 20
+            if to_int(sp.get("chars")) is not None:
+                score += 20
+        pr = obj.get("promptReport")
+        if isinstance(pr, dict):
+            score += 10
+            if to_int(pr.get("skillsPromptChars")) is not None:
+                score += 10
+        return score
+
+    def scan_jsonl(path: str) -> Optional[Dict[str, Any]]:
+        if not os.path.exists(path):
+            return None
+        best: Optional[Tuple[int, Dict[str, Any]]] = None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(obj, dict):
+                        continue
+                    if str(obj.get("traceId") or "") != trace_id and (not run_id or str(obj.get("runId") or "") != run_id):
+                        continue
+                    sc = score_obj(obj)
+                    if best is None or sc >= best[0]:
+                        best = (sc, obj)
+        except OSError:
+            return None
+        return best[1] if best else None
+
+    candidates = [c for c in [specific_obj, scan_jsonl(local_jsonl_path), scan_jsonl(runtime_jsonl_path)] if c]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda o: score_obj(o), reverse=True)
+    return candidates[0]
+
+
 def summarize_system_context(dump: Dict[str, Any]) -> Dict[str, Any]:
     request_meta = dump.get("requestMeta") if isinstance(dump.get("requestMeta"), dict) else {}
     injected = dump.get("injectedFiles") if isinstance(dump.get("injectedFiles"), dict) else {}
@@ -626,6 +700,299 @@ def summarize_system_context(dump: Dict[str, Any]) -> Dict[str, Any]:
         "memory_total_files": to_int(memory.get("totalFiles")),
         "memory_referenced_paths": len(referenced),
     }
+
+
+def flatten_numeric_fields(obj: Any, prefix: str = "") -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = f"{prefix}.{k}" if prefix else str(k)
+            out.update(flatten_numeric_fields(v, key))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            key = f"{prefix}[{i}]" if prefix else f"[{i}]"
+            out.update(flatten_numeric_fields(v, key))
+    else:
+        iv = to_int(obj)
+        if iv is not None and prefix:
+            out[prefix] = iv
+    return out
+
+
+def pick_metric_with_source(flat: Dict[str, int], rules: List[Any]) -> Tuple[Optional[int], Optional[str]]:
+    scored: List[Tuple[int, str, int]] = []
+    for path, value in flat.items():
+        path_lc = path.lower()
+        best = 0
+        for rule in rules:
+            try:
+                score = int(rule(path_lc))
+            except Exception:
+                score = 0
+            if score > best:
+                best = score
+        if best > 0:
+            scored.append((best, path, value))
+    if not scored:
+        return None, None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    _, source, value = scored[0]
+    return value, source
+
+
+def sum_skill_md_chars(dump: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not isinstance(dump, dict):
+        return None
+    skills = dump.get("skills")
+    if not isinstance(skills, dict):
+        return None
+    entries = skills.get("entries")
+    if not isinstance(entries, list):
+        return None
+    total = 0
+    has_any = False
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        iv = to_int(e.get("skillMdChars"))
+        if iv is None:
+            continue
+        total += iv
+        has_any = True
+    return total if has_any else None
+
+
+def extract_prompt_report_from_log_lines(log_lines: List[Dict[str, Any]]) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    pats = {
+        "systemPrompt.chars": re.compile(r'"?systemPrompt\.chars"?\s*[:=]\s*(\d+)', re.IGNORECASE),
+        "tools.schemaChars": re.compile(r'"?tools\.schemaChars"?\s*[:=]\s*(\d+)', re.IGNORECASE),
+        "skills.promptChars": re.compile(r'"?skills\.promptChars"?\s*[:=]\s*(\d+)', re.IGNORECASE),
+        "projectContextChars": re.compile(r'"?projectContextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE),
+        "nonProjectContextChars": re.compile(r'"?nonProjectContextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE),
+        "userTextChars": re.compile(r'"?userTextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE),
+    }
+    for item in log_lines:
+        msg = item.get("msg", "")
+        for k, p in pats.items():
+            m = p.search(msg)
+            if not m:
+                continue
+            iv = to_int(m.group(1))
+            if iv is not None:
+                out[k] = iv
+    return out
+
+
+def infer_worker_system_prompt_chars(logs_dir: str, worker_id: Optional[str]) -> Optional[int]:
+    if not worker_id:
+        return None
+    project_pat = re.compile(r'"?projectContextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE)
+    non_project_pat = re.compile(r'"?nonProjectContextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE)
+    worker_tag = f"[chat:{worker_id}]"
+
+    for path in sorted(glob(os.path.join(logs_dir, "chat-*.log")), reverse=True):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                project_val = None
+                non_project_val = None
+                for line in f:
+                    if worker_tag not in line:
+                        continue
+                    if project_val is None:
+                        m1 = project_pat.search(line)
+                        if m1:
+                            project_val = to_int(m1.group(1))
+                    if non_project_val is None:
+                        m2 = non_project_pat.search(line)
+                        if m2:
+                            non_project_val = to_int(m2.group(1))
+                    if project_val is not None and non_project_val is not None:
+                        return project_val + non_project_val
+        except OSError:
+            continue
+    return None
+
+
+def infer_worker_context_chars(logs_dir: str, worker_id: Optional[str]) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    if not worker_id:
+        return None, None, None
+    project_pat = re.compile(r'"?projectContextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE)
+    non_project_pat = re.compile(r'"?nonProjectContextChars"?\s*[:=]\s*(\d+)', re.IGNORECASE)
+    worker_tag = f"[chat:{worker_id}]"
+
+    for path in sorted(glob(os.path.join(logs_dir, "chat-*.log")), reverse=True):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                project_val = None
+                non_project_val = None
+                for line in f:
+                    if worker_tag not in line:
+                        continue
+                    if project_val is None:
+                        m1 = project_pat.search(line)
+                        if m1:
+                            project_val = to_int(m1.group(1))
+                    if non_project_val is None:
+                        m2 = non_project_pat.search(line)
+                        if m2:
+                            non_project_val = to_int(m2.group(1))
+                    if project_val is not None and non_project_val is not None:
+                        return project_val, non_project_val, f"logs.nearest[{worker_id}]"
+        except OSError:
+            continue
+    return None, None, None
+
+
+def extract_prompt_char_breakdown(
+    dump: Optional[Dict[str, Any]],
+    chain: Optional[Dict[str, Any]],
+    log_lines: List[Dict[str, Any]],
+    runtime_usage: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    merged: Dict[str, int] = {}
+    if isinstance(runtime_usage, dict):
+        merged.update(flatten_numeric_fields(runtime_usage, "runtime"))
+    if isinstance(dump, dict):
+        merged.update(flatten_numeric_fields(dump))
+    if chain and chain.get("custom_row"):
+        _, row = chain["custom_row"]
+        data = row.get("data") if isinstance(row, dict) else None
+        if isinstance(data, dict):
+            merged.update(flatten_numeric_fields(data, "custom.data"))
+    for k, v in extract_prompt_report_from_log_lines(log_lines).items():
+        merged[f"logs.{k}"] = v
+
+    user_chars, user_src = pick_metric_with_source(
+        merged,
+        [
+            lambda p: 140 if p.endswith("runtime.systempromptreport.usertextchars") else 0,
+            lambda p: 110 if p.endswith("runtime.promptreport.usertextchars") else 0,
+            lambda p: 100 if "usertextchars" in p else 0,
+            lambda p: 80 if p.endswith("requestmeta.textlen") else 0,
+            lambda p: 20 if p.endswith("textlen") else 0,
+        ],
+    )
+    system_prompt_chars, system_src = pick_metric_with_source(
+        merged,
+        [
+            lambda p: 150 if p.endswith("runtime.systempromptreport.systemprompt.chars") else 0,
+            lambda p: 120 if p.endswith("runtime.promptreport.systempromptchars") else 0,
+            lambda p: 100 if "systemprompt.chars" in p else 0,
+            lambda p: 90 if "system_prompt" in p and p.endswith("chars") else 0,
+        ],
+    )
+    tools_schema_chars, tools_src = pick_metric_with_source(
+        merged,
+        [
+            lambda p: 150 if p.endswith("runtime.systempromptreport.tools.schemachars") else 0,
+            lambda p: 120 if p.endswith("runtime.promptreport.toolsschemachars") else 0,
+            lambda p: 100 if "tools.schemachars" in p else 0,
+            lambda p: 95 if p.endswith("injectedfiles.toolschars") else 0,
+            lambda p: 80 if "tools" in p and "schemachars" in p else 0,
+        ],
+    )
+    skills_prompt_chars, skills_src = pick_metric_with_source(
+        merged,
+        [
+            lambda p: 150 if p.endswith("runtime.systempromptreport.skills.promptchars") else 0,
+            lambda p: 120 if p.endswith("runtime.promptreport.skillspromptchars") else 0,
+            lambda p: 100 if "skills.promptchars" in p else 0,
+            lambda p: 85 if "skills" in p and "promptchars" in p else 0,
+        ],
+    )
+    project_chars, project_src = pick_metric_with_source(
+        merged,
+        [
+            lambda p: 150 if p.endswith("runtime.systempromptreport.systemprompt.projectcontextchars") else 0,
+            lambda p: 120 if p.endswith("runtime.promptreport.projectcontextchars") else 0,
+            lambda p: 100 if "projectcontextchars" in p else 0,
+        ],
+    )
+    non_project_chars, non_project_src = pick_metric_with_source(
+        merged,
+        [
+            lambda p: 150 if p.endswith("runtime.systempromptreport.systemprompt.nonprojectcontextchars") else 0,
+            lambda p: 120 if p.endswith("runtime.promptreport.nonprojectcontextchars") else 0,
+            lambda p: 100 if "nonprojectcontextchars" in p else 0,
+        ],
+    )
+
+    if system_prompt_chars is None:
+        if project_chars is not None and non_project_chars is not None:
+            system_prompt_chars = project_chars + non_project_chars
+            system_src = "logs.projectContextChars+nonProjectContextChars"
+
+    if skills_prompt_chars is None:
+        skills_fallback = sum_skill_md_chars(dump)
+        if skills_fallback is not None:
+            skills_prompt_chars = skills_fallback
+            skills_src = "dump.skills.entries[*].skillMdChars(sum)"
+
+    return {
+        "user_chars": user_chars,
+        "user_source": user_src,
+        "system_prompt_chars": system_prompt_chars,
+        "system_prompt_source": system_src,
+        "tools_schema_chars": tools_schema_chars,
+        "tools_schema_source": tools_src,
+        "skills_prompt_chars": skills_prompt_chars,
+        "skills_prompt_source": skills_src,
+        "project_context_chars": project_chars,
+        "project_context_source": project_src,
+        "non_project_context_chars": non_project_chars,
+        "non_project_context_source": non_project_src,
+    }
+
+
+def est_tokens(chars: Optional[int]) -> Optional[int]:
+    if chars is None:
+        return None
+    return int(round(chars / 4.0))
+
+
+def extract_tools_schema_breakdown(runtime_usage: Optional[Dict[str, Any]], dump: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "source": None,
+        "total_chars": None,
+        "list_chars": None,
+        "entries": [],
+    }
+
+    if isinstance(runtime_usage, dict):
+        spr = runtime_usage.get("systemPromptReport")
+        if isinstance(spr, dict):
+            tools = spr.get("tools")
+            if isinstance(tools, dict):
+                out["source"] = "runtime.systemPromptReport.tools"
+                out["total_chars"] = to_int(tools.get("schemaChars"))
+                out["list_chars"] = to_int(tools.get("listChars"))
+                entries = tools.get("entries")
+                if isinstance(entries, list):
+                    parsed_entries: List[Dict[str, Any]] = []
+                    for e in entries:
+                        if not isinstance(e, dict):
+                            continue
+                        parsed_entries.append(
+                            {
+                                "name": str(e.get("name") or "unknown"),
+                                "schema_chars": to_int(e.get("schemaChars")),
+                                "summary_chars": to_int(e.get("summaryChars")),
+                                "properties_count": to_int(e.get("propertiesCount")),
+                            }
+                        )
+                    out["entries"] = parsed_entries
+                return out
+
+    if isinstance(dump, dict):
+        injected = dump.get("injectedFiles")
+        if isinstance(injected, dict):
+            tools_chars = to_int(injected.get("toolsChars"))
+            if tools_chars is not None:
+                out["source"] = "preflight.injectedFiles.toolsChars"
+                out["total_chars"] = tools_chars
+                out["entries"] = [{"name": "TOOLS.md", "schema_chars": tools_chars, "summary_chars": None, "properties_count": None}]
+    return out
 
 
 def main() -> None:
@@ -690,6 +1057,8 @@ def main() -> None:
     print(f"openclaw sessionId: {session_id or 'N/A'}")
     print(f"provider/model: {status_info.get('provider') or 'N/A'} / {status_info.get('model') or 'N/A'}")
 
+    normalized_usage: Dict[str, Optional[int]] = {}
+
     print("\n== Route ==")
     route = infer_route(timing)
     print(f"route: {route}")
@@ -724,6 +1093,7 @@ def main() -> None:
             joined = " ".join(f"{k}={v}" for k, v in sorted(token_usage.items()))
             print(f"http token usage: {joined}")
             normalized = normalize_real_usage(token_usage)
+            normalized_usage = normalized
             real_bits = []
             for k in [
                 "prompt_tokens",
@@ -736,9 +1106,17 @@ def main() -> None:
                 if normalized.get(k) is not None:
                     real_bits.append(f"{k}={normalized[k]}")
             if real_bits:
-                print("real usage (normalized): " + " ".join(real_bits))
+                print(
+                    ANSI_BOLD_RED
+                    + "real usage (normalized): "
+                    + " ".join(real_bits)
+                    + ANSI_RESET
+                )
         else:
             print("http token usage: N/A (no usage/token fields found in logs or session custom data)")
+
+    dump_obj: Optional[Dict[str, Any]] = None
+    runtime_usage_obj: Optional[Dict[str, Any]] = find_runtime_usage_by_trace(logs_dir, openclaw_root, message_id, run_id)
 
     print("\n== System Context ==")
     dump_path = find_tool_schema_dump(logs_dir, message_id)
@@ -748,6 +1126,8 @@ def main() -> None:
         print(f"tool schema dump: {dump_path}")
         try:
             dump = read_json(dump_path)
+            if isinstance(dump, dict):
+                dump_obj = dump
             ctx = summarize_system_context(dump if isinstance(dump, dict) else {})
             print(
                 "request meta: "
@@ -772,6 +1152,251 @@ def main() -> None:
             )
         except Exception as e:
             print(f"failed to read system context dump: {e}")
+
+    if runtime_usage_obj:
+        print("runtime usage by trace: found")
+        usage_obj = runtime_usage_obj.get("usage")
+        if isinstance(usage_obj, dict):
+            bits = []
+            for k in ["prompt_tokens", "completion_tokens", "total_tokens"]:
+                iv = to_int(usage_obj.get(k))
+                if iv is not None:
+                    bits.append(f"{k}={iv}")
+            if bits:
+                print("runtime usage by trace tokens: " + " ".join(bits))
+        spr = runtime_usage_obj.get("systemPromptReport")
+        if isinstance(spr, dict):
+            sp = spr.get("systemPrompt") if isinstance(spr.get("systemPrompt"), dict) else {}
+            tools = spr.get("tools") if isinstance(spr.get("tools"), dict) else {}
+            skills = spr.get("skills") if isinstance(spr.get("skills"), dict) else {}
+            sp_bits = []
+            for k in ["chars", "projectContextChars", "nonProjectContextChars"]:
+                iv = to_int(sp.get(k))
+                if iv is not None:
+                    sp_bits.append(f"systemPrompt.{k}={iv}")
+            iv_tools = to_int(tools.get("schemaChars"))
+            if iv_tools is not None:
+                sp_bits.append(f"tools.schemaChars={iv_tools}")
+            iv_skills = to_int(skills.get("promptChars"))
+            if iv_skills is not None:
+                sp_bits.append(f"skills.promptChars={iv_skills}")
+            if sp_bits:
+                print("runtime prompt report: " + " ".join(sp_bits))
+    else:
+        print("runtime usage by trace: not found")
+
+    print("\n== Prompt Tokens Breakdown ==")
+    char_breakdown = extract_prompt_char_breakdown(dump_obj, chain, log_lines, runtime_usage_obj)
+    prompt_tokens_real = normalized_usage.get("prompt_tokens") if normalized_usage else None
+    if prompt_tokens_real is None and runtime_usage_obj:
+        usage_obj = runtime_usage_obj.get("usage") if isinstance(runtime_usage_obj.get("usage"), dict) else {}
+        prompt_tokens_real = to_int(usage_obj.get("prompt_tokens"))
+
+    user_chars = char_breakdown.get("user_chars")
+    user_src = char_breakdown.get("user_source")
+    sys_chars = char_breakdown.get("system_prompt_chars")
+    sys_src = char_breakdown.get("system_prompt_source")
+    tool_chars = char_breakdown.get("tools_schema_chars")
+    tool_src = char_breakdown.get("tools_schema_source")
+    skill_chars = char_breakdown.get("skills_prompt_chars")
+    skill_src = char_breakdown.get("skills_prompt_source")
+    project_chars = char_breakdown.get("project_context_chars")
+    project_src = char_breakdown.get("project_context_source")
+    non_project_chars = char_breakdown.get("non_project_context_chars")
+    non_project_src = char_breakdown.get("non_project_context_source")
+
+    if project_chars is None or non_project_chars is None:
+        ip, inp, base_src = infer_worker_context_chars(logs_dir, worker_id)
+        if project_chars is None and ip is not None:
+            project_chars = ip
+            project_src = f"{base_src}.projectContextChars" if base_src else project_src
+        if non_project_chars is None and inp is not None:
+            non_project_chars = inp
+            non_project_src = f"{base_src}.nonProjectContextChars" if base_src else non_project_src
+
+    if sys_chars is None and project_chars is not None and non_project_chars is not None:
+        sys_chars = project_chars + non_project_chars
+        sys_src = f"{(project_src or 'N/A')}+{(non_project_src or 'N/A')}"
+
+    print(
+        "char components: "
+        f"userInput={user_chars if user_chars is not None else 'N/A'} "
+        f"systemPrompt={sys_chars if sys_chars is not None else 'N/A'} "
+        f"tools.schemaChars={tool_chars if tool_chars is not None else 'N/A'} "
+        f"skills.promptChars={skill_chars if skill_chars is not None else 'N/A'}"
+    )
+    print(
+        "char sources: "
+        f"userInput={user_src or 'N/A'} "
+        f"systemPrompt={sys_src or 'N/A'} "
+        f"tools.schemaChars={tool_src or 'N/A'} "
+        f"skills.promptChars={skill_src or 'N/A'}"
+    )
+    print(
+        "systemPrompt detailed chars: "
+        f"projectContextChars={project_chars if project_chars is not None else 'N/A'} "
+        f"nonProjectContextChars={non_project_chars if non_project_chars is not None else 'N/A'}"
+    )
+    print(
+        "systemPrompt detailed sources: "
+        f"projectContextChars={project_src or 'N/A'} "
+        f"nonProjectContextChars={non_project_src or 'N/A'}"
+    )
+    if sys_chars is not None and project_chars is not None and non_project_chars is not None:
+        print(
+            "systemPrompt sum check: "
+            f"{sys_chars} = {project_chars} + {non_project_chars}"
+        )
+
+    if dump_obj and isinstance(dump_obj, dict) and project_chars is not None:
+        injected = dump_obj.get("injectedFiles")
+        if isinstance(injected, dict):
+            injected_total = 0
+            has_injected = False
+            injected_bits: List[str] = []
+            for k, v in injected.items():
+                if not str(k).endswith("Chars"):
+                    continue
+                iv = to_int(v)
+                if iv is None:
+                    continue
+                injected_total += iv
+                has_injected = True
+                injected_bits.append(f"{k}={iv}")
+            if has_injected:
+                wrapper = project_chars - injected_total
+                print(
+                    "projectContext detailed chars: "
+                    f"injectedFilesChars={injected_total} "
+                    f"projectWrapperChars={wrapper}"
+                )
+                if injected_bits:
+                    print("projectContext injected files: " + " ".join(sorted(injected_bits)))
+
+    if non_project_chars is not None and skill_chars is not None:
+        if skill_src and "skillmdchars(sum)" in skill_src.lower():
+            print(
+                "nonProject detailed chars: "
+                f"skills.promptChars={skill_chars} "
+                "otherSystemChars=N/A (skills source is SKILL.md sum, not runtime promptChars)"
+            )
+        else:
+            other_non_project = non_project_chars - skill_chars
+            print(
+                "nonProject detailed chars: "
+                f"skills.promptChars={skill_chars} "
+                f"otherSystemChars={other_non_project}"
+            )
+    elif non_project_chars is not None:
+        print(
+            "nonProject detailed chars: "
+            f"skills.promptChars={skill_chars if skill_chars is not None else 'N/A'} "
+            "otherSystemChars=N/A"
+        )
+
+    if dump_obj and isinstance(dump_obj, dict):
+        skills_obj = dump_obj.get("skills")
+        if isinstance(skills_obj, dict):
+            entries = skills_obj.get("entries")
+            if isinstance(entries, list) and entries:
+                skill_bits: List[Tuple[str, int]] = []
+                for e in entries:
+                    if not isinstance(e, dict):
+                        continue
+                    name = str(e.get("name") or "unknown")
+                    iv = to_int(e.get("skillMdChars"))
+                    if iv is None:
+                        continue
+                    skill_bits.append((name, iv))
+                if skill_bits:
+                    skill_bits.sort(key=lambda x: x[1], reverse=True)
+                    print(
+                        "nonProject skills(preflight SKILL.md): "
+                        + " ".join(f"{name}={chars}" for name, chars in skill_bits)
+                    )
+
+    tools_breakdown = extract_tools_schema_breakdown(runtime_usage_obj, dump_obj)
+    tools_total = tools_breakdown.get("total_chars")
+    tools_list = tools_breakdown.get("list_chars")
+    tools_entries = tools_breakdown.get("entries") if isinstance(tools_breakdown.get("entries"), list) else []
+    if tools_total is not None:
+        entries_sum = 0
+        has_entries_sum = False
+        for e in tools_entries:
+            if not isinstance(e, dict):
+                continue
+            iv = to_int(e.get("schema_chars"))
+            if iv is None:
+                continue
+            entries_sum += iv
+            has_entries_sum = True
+        print(
+            "tools.schema detailed chars: "
+            f"total={tools_total} "
+            f"listChars={tools_list if tools_list is not None else 'N/A'} "
+            f"entriesSum={entries_sum if has_entries_sum else 'N/A'}"
+        )
+        print(f"tools.schema detailed source: {tools_breakdown.get('source') or 'N/A'}")
+
+        parsed: List[Tuple[str, int]] = []
+        for e in tools_entries:
+            if not isinstance(e, dict):
+                continue
+            iv = to_int(e.get("schema_chars"))
+            if iv is None:
+                continue
+            parsed.append((str(e.get("name") or "unknown"), iv))
+        parsed.sort(key=lambda x: x[1], reverse=True)
+        for name, schema_chars in parsed:
+            bits = [
+                f"name={name}",
+                f"schemaChars={schema_chars}",
+                f"schemaTok≈{est_tokens(schema_chars)}",
+            ]
+            print("tools.schema entry: " + " ".join(bits))
+
+    est_bits = []
+    est_user = est_tokens(user_chars)
+    est_sys = est_tokens(sys_chars)
+    est_tool = est_tokens(tool_chars)
+    est_skill = est_tokens(skill_chars)
+    if est_user is not None:
+        est_bits.append(f"userInput≈{est_user}")
+    if est_sys is not None:
+        est_bits.append(f"systemPrompt≈{est_sys}")
+    if est_tool is not None:
+        est_bits.append(f"tools.schema≈{est_tool}")
+    # if est_skill is not None:
+    #     est_bits.append(f"skills≈{est_skill}")
+    if est_bits:
+        print(ANSI_BOLD_RED + "estimated tokens (chars/4): " + " ".join(est_bits) + ANSI_RESET)
+    else:
+        print("estimated tokens (chars/4): N/A")
+
+    tracked_est_core = None
+    vals_core = [v for v in [est_user, est_sys, est_tool] if v is not None]
+    if vals_core:
+        tracked_est_core = sum(vals_core)
+
+    tracked_est_with_skills = None
+    vals_with_skills = [v for v in [est_user, est_sys, est_tool, est_skill] if v is not None]
+    if vals_with_skills:
+        tracked_est_with_skills = sum(vals_with_skills)
+
+    print(
+        "prompt tokens compare(core): "
+        f"tracked_est_core={tracked_est_core if tracked_est_core is not None else 'N/A'} "
+        f"real_prompt_tokens={prompt_tokens_real if prompt_tokens_real is not None else 'N/A'}"
+    )
+    # print(
+    #     "prompt tokens compare(with-skills): "
+    #     f"tracked_est_with_skills={tracked_est_with_skills if tracked_est_with_skills is not None else 'N/A'} "
+    #     f"real_prompt_tokens={prompt_tokens_real if prompt_tokens_real is not None else 'N/A'}"
+    # )
+    # if tracked_est_core is not None and prompt_tokens_real is not None:
+    #     print(f"prompt tokens gap(core): {prompt_tokens_real - tracked_est_core}")
+    # if tracked_est_with_skills is not None and prompt_tokens_real is not None:
+    #     print(f"prompt tokens gap(with-skills): {prompt_tokens_real - tracked_est_with_skills}")
 
     print("\n== Main Log Timeline ==")
     if not log_lines:

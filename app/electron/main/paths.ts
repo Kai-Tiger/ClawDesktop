@@ -137,6 +137,20 @@ export class OpenClawPaths {
     }
   }
 
+  writeGatewayRuntimeUsageByTrace(payload: Record<string, unknown>, traceId?: string): void {
+    const logsDir = path.join(this.userRuntimeRoot, 'logs');
+    try {
+      fs.mkdirSync(logsDir, { recursive: true });
+      fs.appendFileSync(path.join(logsDir, 'gateway-runtime-usage-by-trace.jsonl'), `${JSON.stringify(payload)}\n`, 'utf8');
+      fs.writeFileSync(path.join(logsDir, 'gateway-runtime-usage-by-trace.latest.json'), JSON.stringify(payload, null, 2), 'utf8');
+      if (traceId) {
+        fs.writeFileSync(path.join(logsDir, `gateway-runtime-usage-${traceId}.json`), JSON.stringify(payload, null, 2), 'utf8');
+      }
+    } catch (err) {
+      this.writeChatLog(`[gateway-runtime-usage] write failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   runOpenClaw(args: string[], opts?: { cwd?: string; homeOverride?: string; profileOverride?: string; timeoutMs?: number }): Promise<ExecResult> {
     return new Promise((resolve) => {
       const home = opts?.homeOverride || this.userOpenClawHome;

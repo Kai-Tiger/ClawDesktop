@@ -20,8 +20,8 @@ interface ChatStore {
   setWorkers: (workers: WorkerMeta[]) => void;
   selectWorker: (id: string) => void;
   pushMessage: (workerId: string, msg: ChatMessage) => void;
-  updateLastMessage: (workerId: string, content: string) => void;
-  updateMessageById: (workerId: string, msgId: string, content: string) => void;
+  updateLastMessage: (workerId: string, content: MessageContent) => void;
+  updateMessageById: (workerId: string, msgId: string, content: MessageContent) => void;
   appendToLastMessage: (workerId: string, chunk: string) => void;
   setSending: (workerId: string, value: boolean) => void;
   clearMessages: (workerId: string) => void;
@@ -29,7 +29,7 @@ interface ChatStore {
   setGroups: (groups: GroupChannel[]) => void;
   selectGroup: (id: string) => void;
   addGroupMessage: (groupId: string, msg: GroupMessage) => void;
-  updateGroupMessage: (groupId: string, msgId: string, content: string) => void;
+  updateGroupMessage: (groupId: string, msgId: string, content: MessageContent) => void;
   clearGroupMessages: (groupId: string) => void;
 }
 

@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   workerOpenOpenClawDir: () => ipcRenderer.invoke('workers:open-openclaw-dir'),
   workerOpenWorkerDir: (workerId: string) => ipcRenderer.invoke('workers:open-worker-dir', workerId),
   workerOpenFileLocation: (workerId: string, filePath: string) => ipcRenderer.invoke('workers:open-file-location', workerId, filePath),
+  traceMessageChain: (messageId: string) => ipcRenderer.invoke('chat:trace-message-chain', messageId),
   workerUpdateMeta: (workerId: string, name: string, description: string) => ipcRenderer.invoke('workers:update-meta', workerId, name, description),
   getModel: () => ipcRenderer.invoke('settings:getModel'),
   setModel: (model: string) => ipcRenderer.invoke('settings:setModel', model),

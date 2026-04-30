@@ -87,5 +87,6 @@ export function registerIpcHandlers(opts: {
   ipcMain.handle('workers:open-openclaw-dir', () => workers.openOpenClawDir());
   ipcMain.handle('workers:open-worker-dir', (_evt, workerId: string) => workers.openWorkerDir(workerId));
   ipcMain.handle('workers:open-file-location', (_evt, workerId: string, filePath: string) => workers.openFileLocation(workerId, filePath));
+  ipcMain.handle('chat:trace-message-chain', (_evt, messageId: string) => workers.traceMessageChain(messageId));
   ipcMain.handle('workers:update-meta', (_evt, workerId: string, name: string, description: string) => workers.updateWorkerMeta(workerId, name, description));
 }

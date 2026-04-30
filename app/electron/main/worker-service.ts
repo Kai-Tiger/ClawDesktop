@@ -563,4 +563,69 @@ export class WorkerService {
     }
     return shell.openPath(targetDir);
   }
+
+  traceMessageChain(messageId: string): Promise<{ output: string; missingPython?: boolean }> {
+    const trimmedMessageId = (messageId || '').trim();
+    if (!trimmedMessageId) {
+      return Promise.resolve({ output: 'messageId 不能为空' });
+    }
+
+    const scriptPath = path.resolve(this.paths.projectRoot, '../../trace-message-chain.py');
+    if (!fs.existsSync(scriptPath)) {
+      return Promise.resolve({ output: `未找到 trace-message-chain.py: ${scriptPath}` });
+    }
+
+    return new Promise((resolve) => {
+      const child = spawn('python3', ['trace-message-chain.py', trimmedMessageId], {
+        cwd: path.dirname(scriptPath),
+        env: { ...process.env },
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (settled) return;
+        settled = true;
+        if (err.code === 'ENOENT') {
+          resolve({ output: '缺少python环境', missingPython: true });
+          return;
+        }
+        resolve({ output: `执行失败: ${err.message || String(err)}` });
+      });
+
+      child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+
+        if (code === 0) {
+          const result = (stdout || '').trim();
+          resolve({ output: result || '(无输出)' });
+          return;
+        }
+
+        const errText = (stderr || '').trim();
+        if (code === 127 || /command not found|not found/i.test(errText)) {
+          resolve({ output: '缺少python环境', missingPython: true });
+          return;
+        }
+
+        const fallback = [
+          `执行失败 (code=${code ?? 'unknown'})`,
+          errText || (stdout || '').trim() || '无错误输出',
+        ]
+          .filter(Boolean)
+          .join('\n');
+        resolve({ output: fallback });
+      });
+    });
+  }
 }
