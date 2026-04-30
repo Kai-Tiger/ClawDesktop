@@ -1050,12 +1050,12 @@ def main() -> None:
     if prev_user:
         print(f"userPreview: {short_text(str(prev_user.get('content', '')))}")
 
-    print("\n== IDs Mapping ==")
-    print(f"runId: {run_id or 'N/A'}")
-    print(f"spawn session-id(arg): {timing.get('spawn_session_id') or 'N/A'}")
-    print(f"openclaw sessionKey: {session_key or 'N/A'}")
-    print(f"openclaw sessionId: {session_id or 'N/A'}")
-    print(f"provider/model: {status_info.get('provider') or 'N/A'} / {status_info.get('model') or 'N/A'}")
+    # print("\n== IDs Mapping ==")
+    # print(f"runId: {run_id or 'N/A'}")
+    # print(f"spawn session-id(arg): {timing.get('spawn_session_id') or 'N/A'}")
+    # print(f"openclaw sessionKey: {session_key or 'N/A'}")
+    # print(f"openclaw sessionId: {session_id or 'N/A'}")
+    # print(f"provider/model: {status_info.get('provider') or 'N/A'} / {status_info.get('model') or 'N/A'}")
 
     normalized_usage: Dict[str, Optional[int]] = {}
 
@@ -1118,72 +1118,72 @@ def main() -> None:
     dump_obj: Optional[Dict[str, Any]] = None
     runtime_usage_obj: Optional[Dict[str, Any]] = find_runtime_usage_by_trace(logs_dir, openclaw_root, message_id, run_id)
 
-    print("\n== System Context ==")
-    dump_path = find_tool_schema_dump(logs_dir, message_id)
-    if not dump_path:
-        print("tool schema dump: not found")
-    else:
-        print(f"tool schema dump: {dump_path}")
-        try:
-            dump = read_json(dump_path)
-            if isinstance(dump, dict):
-                dump_obj = dump
-            ctx = summarize_system_context(dump if isinstance(dump, dict) else {})
-            print(
-                "request meta: "
-                f"textLen={ctx['text_len'] if ctx['text_len'] is not None else 'N/A'} "
-                f"historyCount={ctx['history_count'] if ctx['history_count'] is not None else 'N/A'} "
-                f"imageCount={ctx['image_count'] if ctx['image_count'] is not None else 'N/A'}"
-            )
-            print(
-                "injected context chars: "
-                f"total={ctx['injected_total_chars']} "
-                + " ".join(f"{k}={v}" for k, v in ctx["injected_char_fields"])
-            )
-            print(
-                "skills context: "
-                f"count={ctx['skills_count'] if ctx['skills_count'] is not None else 'N/A'} "
-                f"blockChars={ctx['skills_block_chars']}"
-            )
-            print(
-                "memory preflight: "
-                f"totalFiles={ctx['memory_total_files'] if ctx['memory_total_files'] is not None else 'N/A'} "
-                f"referencedPaths={ctx['memory_referenced_paths']}"
-            )
-        except Exception as e:
-            print(f"failed to read system context dump: {e}")
+    # print("\n== System Context ==")
+    # dump_path = find_tool_schema_dump(logs_dir, message_id)
+    # if not dump_path:
+    #     print("tool schema dump: not found")
+    # else:
+    #     print(f"tool schema dump: {dump_path}")
+    #     try:
+    #         dump = read_json(dump_path)
+    #         if isinstance(dump, dict):
+    #             dump_obj = dump
+    #         ctx = summarize_system_context(dump if isinstance(dump, dict) else {})
+    #         print(
+    #             "request meta: "
+    #             f"textLen={ctx['text_len'] if ctx['text_len'] is not None else 'N/A'} "
+    #             f"historyCount={ctx['history_count'] if ctx['history_count'] is not None else 'N/A'} "
+    #             f"imageCount={ctx['image_count'] if ctx['image_count'] is not None else 'N/A'}"
+    #         )
+    #         print(
+    #             "injected context chars: "
+    #             f"total={ctx['injected_total_chars']} "
+    #             + " ".join(f"{k}={v}" for k, v in ctx["injected_char_fields"])
+    #         )
+    #         print(
+    #             "skills context: "
+    #             f"count={ctx['skills_count'] if ctx['skills_count'] is not None else 'N/A'} "
+    #             f"blockChars={ctx['skills_block_chars']}"
+    #         )
+    #         print(
+    #             "memory preflight: "
+    #             f"totalFiles={ctx['memory_total_files'] if ctx['memory_total_files'] is not None else 'N/A'} "
+    #             f"referencedPaths={ctx['memory_referenced_paths']}"
+    #         )
+    #     except Exception as e:
+    #         print(f"failed to read system context dump: {e}")
 
-    if runtime_usage_obj:
-        print("runtime usage by trace: found")
-        usage_obj = runtime_usage_obj.get("usage")
-        if isinstance(usage_obj, dict):
-            bits = []
-            for k in ["prompt_tokens", "completion_tokens", "total_tokens"]:
-                iv = to_int(usage_obj.get(k))
-                if iv is not None:
-                    bits.append(f"{k}={iv}")
-            if bits:
-                print("runtime usage by trace tokens: " + " ".join(bits))
-        spr = runtime_usage_obj.get("systemPromptReport")
-        if isinstance(spr, dict):
-            sp = spr.get("systemPrompt") if isinstance(spr.get("systemPrompt"), dict) else {}
-            tools = spr.get("tools") if isinstance(spr.get("tools"), dict) else {}
-            skills = spr.get("skills") if isinstance(spr.get("skills"), dict) else {}
-            sp_bits = []
-            for k in ["chars", "projectContextChars", "nonProjectContextChars"]:
-                iv = to_int(sp.get(k))
-                if iv is not None:
-                    sp_bits.append(f"systemPrompt.{k}={iv}")
-            iv_tools = to_int(tools.get("schemaChars"))
-            if iv_tools is not None:
-                sp_bits.append(f"tools.schemaChars={iv_tools}")
-            iv_skills = to_int(skills.get("promptChars"))
-            if iv_skills is not None:
-                sp_bits.append(f"skills.promptChars={iv_skills}")
-            if sp_bits:
-                print("runtime prompt report: " + " ".join(sp_bits))
-    else:
-        print("runtime usage by trace: not found")
+    # if runtime_usage_obj:
+    #     print("runtime usage by trace: found")
+    #     usage_obj = runtime_usage_obj.get("usage")
+    #     if isinstance(usage_obj, dict):
+    #         bits = []
+    #         for k in ["prompt_tokens", "completion_tokens", "total_tokens"]:
+    #             iv = to_int(usage_obj.get(k))
+    #             if iv is not None:
+    #                 bits.append(f"{k}={iv}")
+    #         if bits:
+    #             print("runtime usage by trace tokens: " + " ".join(bits))
+    #     spr = runtime_usage_obj.get("systemPromptReport")
+    #     if isinstance(spr, dict):
+    #         sp = spr.get("systemPrompt") if isinstance(spr.get("systemPrompt"), dict) else {}
+    #         tools = spr.get("tools") if isinstance(spr.get("tools"), dict) else {}
+    #         skills = spr.get("skills") if isinstance(spr.get("skills"), dict) else {}
+    #         sp_bits = []
+    #         for k in ["chars", "projectContextChars", "nonProjectContextChars"]:
+    #             iv = to_int(sp.get(k))
+    #             if iv is not None:
+    #                 sp_bits.append(f"systemPrompt.{k}={iv}")
+    #         iv_tools = to_int(tools.get("schemaChars"))
+    #         if iv_tools is not None:
+    #             sp_bits.append(f"tools.schemaChars={iv_tools}")
+    #         iv_skills = to_int(skills.get("promptChars"))
+    #         if iv_skills is not None:
+    #             sp_bits.append(f"skills.promptChars={iv_skills}")
+    #         if sp_bits:
+    #             print("runtime prompt report: " + " ".join(sp_bits))
+    # else:
+    #     print("runtime usage by trace: not found")
 
     print("\n== Prompt Tokens Breakdown ==")
     char_breakdown = extract_prompt_char_breakdown(dump_obj, chain, log_lines, runtime_usage_obj)
@@ -1223,25 +1223,25 @@ def main() -> None:
         f"userInput={user_chars if user_chars is not None else 'N/A'} "
         f"systemPrompt={sys_chars if sys_chars is not None else 'N/A'} "
         f"tools.schemaChars={tool_chars if tool_chars is not None else 'N/A'} "
-        f"skills.promptChars={skill_chars if skill_chars is not None else 'N/A'}"
+        # f"skills.promptChars={skill_chars if skill_chars is not None else 'N/A'}"
     )
-    print(
-        "char sources: "
-        f"userInput={user_src or 'N/A'} "
-        f"systemPrompt={sys_src or 'N/A'} "
-        f"tools.schemaChars={tool_src or 'N/A'} "
-        f"skills.promptChars={skill_src or 'N/A'}"
-    )
+    # print(
+    #     "char sources: "
+    #     f"userInput={user_src or 'N/A'} "
+    #     f"systemPrompt={sys_src or 'N/A'} "
+    #     f"tools.schemaChars={tool_src or 'N/A'} "
+    #     f"skills.promptChars={skill_src or 'N/A'}"
+    # )
     print(
         "systemPrompt detailed chars: "
-        f"projectContextChars={project_chars if project_chars is not None else 'N/A'} "
-        f"nonProjectContextChars={non_project_chars if non_project_chars is not None else 'N/A'}"
+        f"  projectContextChars={project_chars if project_chars is not None else 'N/A'} "
+        f"  nonProjectContextChars={non_project_chars if non_project_chars is not None else 'N/A'}"
     )
-    print(
-        "systemPrompt detailed sources: "
-        f"projectContextChars={project_src or 'N/A'} "
-        f"nonProjectContextChars={non_project_src or 'N/A'}"
-    )
+    # print(
+    #     "   systemPrompt detailed sources: "
+    #     f"  projectContextChars={project_src or 'N/A'} "
+    #     f"  nonProjectContextChars={non_project_src or 'N/A'}"
+    # )
     if sys_chars is not None and project_chars is not None and non_project_chars is not None:
         print(
             "systemPrompt sum check: "
@@ -1266,12 +1266,12 @@ def main() -> None:
             if has_injected:
                 wrapper = project_chars - injected_total
                 print(
-                    "projectContext detailed chars: "
+                    "   projectContext detailed chars: "
                     f"injectedFilesChars={injected_total} "
                     f"projectWrapperChars={wrapper}"
                 )
                 if injected_bits:
-                    print("projectContext injected files: " + " ".join(sorted(injected_bits)))
+                    print("     projectContext injected files: " + " ".join(sorted(injected_bits)))
 
     if non_project_chars is not None and skill_chars is not None:
         if skill_src and "skillmdchars(sum)" in skill_src.lower():
@@ -1347,13 +1347,9 @@ def main() -> None:
                 continue
             parsed.append((str(e.get("name") or "unknown"), iv))
         parsed.sort(key=lambda x: x[1], reverse=True)
-        for name, schema_chars in parsed:
-            bits = [
-                f"name={name}",
-                f"schemaChars={schema_chars}",
-                f"schemaTok≈{est_tokens(schema_chars)}",
-            ]
-            print("tools.schema entry: " + " ".join(bits))
+        if parsed:
+            parts = [f"{name}({schema_chars})" for name, schema_chars in parsed]
+            print("total tools.schema = " + " + ".join(parts))
 
     est_bits = []
     est_user = est_tokens(user_chars)

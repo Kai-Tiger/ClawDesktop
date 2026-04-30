@@ -447,7 +447,7 @@ export class WorkerService {
           ? ({ ...(entry.tools as Record<string, unknown>) } as Record<string, unknown>)
           : ({} as Record<string, unknown>);
         const deny = Array.isArray(tools.deny) ? tools.deny.filter((v: unknown) => typeof v === 'string') : [];
-        const managedTools = new Set(['sessions_spawn', 'sessions_yield']);
+        const managedTools = new Set(['cron', 'sessions_spawn', 'sessions_yield']);
         const preserved = deny.filter((tool) => !managedTools.has(tool));
         const mergedDeny = Array.from(new Set([...preserved, ...this.paths.deniedSubagentTools]));
         if (JSON.stringify(mergedDeny) !== JSON.stringify(deny)) {
