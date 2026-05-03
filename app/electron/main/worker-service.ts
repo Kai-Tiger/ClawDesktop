@@ -212,15 +212,38 @@ export class WorkerService {
     }
   }
 
-  installSkillFromDir(workerId: string, skillDirPath: string): { ok: boolean; error?: string; skills?: SkillMeta[] } {
+  installSkillFromDir(workerId: string, skillDirPath: string, skillName?: string): { ok: boolean; error?: string; skills?: SkillMeta[] } {
     try {
       const selected = this.listWorkers().find((w) => w.id === workerId);
       if (!selected) {
         return { ok: false, error: `未找到 worker: ${workerId}` };
       }
 
+      if (!fs.existsSync(skillDirPath)) {
+        return { ok: false, error: '所选 skill 路径不存在' };
+      }
+
+      const sourceStat = fs.statSync(skillDirPath);
+      const sourceBaseName = path.basename(skillDirPath);
+      const isSkillFile = sourceStat.isFile() && sourceBaseName.toLowerCase() === 'skill.md';
+      const normalizedSkillName = (skillName || '').trim();
+
+      if (!sourceStat.isDirectory() && !isSkillFile) {
+        return { ok: false, error: '请选择 Skill 文件夹或 SKILL.md 文件' };
+      }
+
+      if (isSkillFile && !normalizedSkillName) {
+        return { ok: false, error: 'Skill 名称不能为空' };
+      }
+
+      if (normalizedSkillName && /[\\/]/.test(normalizedSkillName)) {
+        return { ok: false, error: 'Skill 名称不能包含路径分隔符' };
+      }
+
       const workspacePath = this.paths.workerAgentWorkspacePath(workerId);
-      const skillName = path.basename(skillDirPath);
+      const targetSkillName = isSkillFile
+        ? normalizedSkillName
+        : sourceBaseName;
       const destinations = Array.from(
         new Set([
           path.join(workspacePath, 'skills'),
@@ -230,9 +253,14 @@ export class WorkerService {
 
       for (const skillsDst of destinations) {
         fs.mkdirSync(skillsDst, { recursive: true });
-        const destPath = path.join(skillsDst, skillName);
+        const destPath = path.join(skillsDst, targetSkillName);
         if (fs.existsSync(destPath)) fs.rmSync(destPath, { recursive: true, force: true });
-        fs.cpSync(skillDirPath, destPath, { recursive: true });
+        if (isSkillFile) {
+          fs.mkdirSync(destPath, { recursive: true });
+          fs.copyFileSync(skillDirPath, path.join(destPath, 'SKILL.md'));
+        } else {
+          fs.cpSync(skillDirPath, destPath, { recursive: true });
+        }
       }
 
       this.sessions.clearAgentSessionSnapshot(workerId);
@@ -529,13 +557,31 @@ export class WorkerService {
     return result.canceled ? null : result.filePaths[0];
   }
 
-  async openSkillDirDialog(): Promise<string | null> {
+  async openSkillDirDialog(): Promise<{ path: string; kind: 'directory' | 'skillFile'; suggestedName?: string } | null> {
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return null;
     const result = await dialog.showOpenDialog(win, {
-      properties: ['openDirectory'],
+      properties: ['openDirectory', 'openFile'],
+      filters: [{ name: 'Skill', extensions: ['md'] }],
     });
-    return result.canceled ? null : result.filePaths[0];
+    if (result.canceled) return null;
+    const selectedPath = result.filePaths[0];
+    if (!selectedPath || !fs.existsSync(selectedPath)) return null;
+
+    const stat = fs.statSync(selectedPath);
+    if (stat.isDirectory()) {
+      return { path: selectedPath, kind: 'directory' };
+    }
+
+    const baseName = path.basename(selectedPath);
+    if (!stat.isFile() || baseName.toLowerCase() !== 'skill.md') {
+      throw new Error('请选择 Skill 文件夹或 SKILL.md 文件');
+    }
+
+    const firstFiveLines = fs.readFileSync(selectedPath, 'utf8').split(/\r?\n/).slice(0, 5);
+    const nameLine = firstFiveLines.find((line) => /^\s*name\s*:/i.test(line));
+    const suggestedName = nameLine?.replace(/^\s*name\s*:\s*/i, '').trim() || '';
+    return { path: selectedPath, kind: 'skillFile', suggestedName };
   }
 
   openOpenClawDir(): Promise<string> {

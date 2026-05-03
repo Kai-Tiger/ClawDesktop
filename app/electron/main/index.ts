@@ -19,7 +19,7 @@ const workers = new WorkerService(paths, sessions);
 const gateway = new GatewayService(paths, () => workers.listWorkers());
 const telegram = new TelegramService(paths, workers);
 const config = new ConfigService(paths, sessions, gateway);
-const chat = new ChatService(paths, gateway, sessions, workers, () => config.getConfiguredModelFull(), () => config.getModel());
+const chat = new ChatService(paths, gateway, sessions, workers, (workerId) => config.getWorkerConfiguredModelFull(workerId), () => config.getModel());
 const coordinator = new CoordinatorService(paths, config);
 
 async function bootstrap() {

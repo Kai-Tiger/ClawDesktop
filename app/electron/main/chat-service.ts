@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, app, dialog, nativeImage } from 'electron';
 import type { ChatResult, ImageInput, MessageContent, MessageContentBlock, MessageItem } from './types';
 import type { OpenClawPaths } from './paths';
 import type { GatewayService } from './gateway-service';
@@ -17,7 +17,7 @@ export class ChatService {
     private readonly gateway: GatewayService,
     private readonly sessions: SessionService,
     private readonly workers: WorkerService,
-    private readonly getConfiguredModelFull: () => string,
+    private readonly getConfiguredModelFull: (workerId: string) => string,
     private readonly getModel: () => string
   ) {}
 
@@ -38,17 +38,95 @@ export class ChatService {
     if (typeof content === 'string') return content;
     if (!Array.isArray(content)) return content;
 
-    return content.map((block) => {
+    const normalized = content.map((block) => {
       if (!block || typeof block !== 'object') return block;
       const entry = block as Record<string, unknown>;
-      if (entry.type === 'image' && typeof entry.mediaType === 'string' && typeof entry.data === 'string') {
+      if (entry.type === 'text' && typeof entry.text === 'string') {
         return {
           type: 'text',
-          text: `[image:${entry.mediaType},size=${entry.data.length}]`,
+          text: entry.text,
+        };
+      }
+      if (entry.type === 'image' && typeof entry.mediaType === 'string' && typeof entry.data === 'string') {
+        return {
+          type: 'image',
+          mediaType: entry.mediaType,
+          data: entry.data,
         };
       }
       return block;
     });
+
+    return normalized.filter((block) => {
+      if (!block || typeof block !== 'object') return false;
+      const entry = block as Record<string, unknown>;
+      if (entry.type === 'text') return typeof entry.text === 'string';
+      if (entry.type === 'image') {
+        return typeof entry.mediaType === 'string' && typeof entry.data === 'string' && entry.data.length > 0;
+      }
+      return false;
+    });
+  }
+
+  private isDirectImageModel(configuredModel: string): boolean {
+    const m = (configuredModel || '').toLowerCase();
+    return m.startsWith('openrouter/') && m.includes('image');
+  }
+
+  private getOpenRouterApiKey(): string {
+    const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const key = raw?.models?.providers?.openrouter?.apiKey;
+      return typeof key === 'string' ? key.trim() : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private async chatHttpDirectOpenRouter(
+    configuredModel: string,
+    messages: Array<{ role: string; content: unknown }>,
+    onLog?: (step: string) => void,
+    traceId?: string
+  ): Promise<unknown> {
+    const apiKey = this.getOpenRouterApiKey();
+    if (!apiKey) {
+      throw new Error('OpenRouter API Key 未配置');
+    }
+    const model = configuredModel.replace(/^openrouter\//, '');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    };
+    if (traceId) {
+      headers['x-openclaw-trace-id'] = traceId;
+    }
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), this.paths.httpTimeoutMs);
+    const t = Date.now();
+    onLog?.(`direct-openrouter fetch → /chat/completions model=${model} timeout=${this.paths.httpTimeoutMs}ms`);
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model, messages }),
+        signal: ctrl.signal,
+      });
+      onLog?.(`direct-openrouter fetch ← ${res.status} (${Date.now() - t}ms)`);
+      if (!res.ok) {
+        throw new Error(`OpenRouter HTTP ${res.status}: ${await res.text()}`);
+      }
+      return await res.json();
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error(`OpenRouter 请求超时（>${this.paths.httpTimeoutMs}ms）`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private summarizeMessageContent(content: MessageContent): string {
@@ -103,14 +181,10 @@ export class ChatService {
   private async extractReplyContent(json: unknown): Promise<MessageContent> {
     if (!json || typeof json !== 'object') return '';
     const root = json as {
-      choices?: Array<{ message?: { content?: unknown; text?: unknown }; delta?: { content?: unknown }; text?: unknown }>;
+      choices?: Array<{ message?: { content?: unknown; text?: unknown; images?: unknown }; delta?: { content?: unknown }; text?: unknown }>;
       output_text?: unknown;
       output?: Array<{ type?: string; content?: unknown; text?: unknown; image_url?: unknown; b64_json?: unknown }>;
     };
-
-    if (typeof root.output_text === 'string' && root.output_text.trim()) {
-      return root.output_text;
-    }
 
     const blocks: MessageContentBlock[] = [];
     const pushText = (text: unknown) => {
@@ -140,6 +214,8 @@ export class ChatService {
         if (entryType === 'image_url') {
           if (entry.image_url && typeof entry.image_url === 'object') {
             await pushImageUrl((entry.image_url as Record<string, unknown>).url);
+          } else {
+            await pushImageUrl(entry.image_url);
           }
           await pushImageUrl(entry.url);
           continue;
@@ -155,18 +231,26 @@ export class ChatService {
         if (typeof entry.text === 'string') pushText(entry.text);
         if (entry.image_url && typeof entry.image_url === 'object') {
           await pushImageUrl((entry.image_url as Record<string, unknown>).url);
+        } else {
+          await pushImageUrl(entry.image_url);
         }
         await pushImageUrl(entry.url);
         pushImageBase64(entry.b64_json, entry.media_type ?? entry.mediaType ?? entry.mime_type);
       }
     };
 
+    pushText(root.output_text);
+
     const messageContent = root.choices?.[0]?.message?.content;
-    if (typeof messageContent === 'string' && messageContent.trim()) {
-      return messageContent;
+    if (typeof messageContent === 'string') {
+      pushText(messageContent);
     }
     if (Array.isArray(messageContent)) {
       await parseContentArray(messageContent);
+    }
+    const messageImages = root.choices?.[0]?.message?.images;
+    if (Array.isArray(messageImages)) {
+      await parseContentArray(messageImages);
     }
 
     if (Array.isArray(root.output)) {
@@ -227,6 +311,9 @@ export class ChatService {
       : typeof msgContent;
 
     const output = Array.isArray(root.output) ? root.output : [];
+    const messageImages = firstMsg && Array.isArray(firstMsg.images)
+      ? firstMsg.images
+      : [];
     const usage = root.usage && typeof root.usage === 'object' ? (root.usage as Record<string, unknown>) : null;
     const usagePayload = usage ? JSON.stringify(usage) : 'none';
 
@@ -235,6 +322,7 @@ export class ChatService {
       `choices=${choices.length}`,
       `msgContentType=${msgContentType}`,
       `outputItems=${output.length}`,
+      `messageImages=${messageImages.length}`,
       `hasOutputText=${typeof root.output_text === 'string'}`,
       `usage=${usagePayload}`,
     ].join(' ');
@@ -506,6 +594,7 @@ export class ChatService {
 
   private async chatHttp(
     gatewayModel: string,
+    configuredModel: string,
     promptContextPath: string,
     message: string,
     images: ImageInput[],
@@ -525,7 +614,25 @@ export class ChatService {
       { role: 'user', content: this.toOpenAIContent(userContent) },
     ];
 
-    const configuredModel = this.getConfiguredModelFull() || '(unset)';
+    if (this.isDirectImageModel(configuredModel)) {
+      const json = await this.chatHttpDirectOpenRouter(configuredModel, messages, onLog, traceId);
+      const runtimeUsageRecord = this.buildRuntimeUsageByTraceRecord({
+        traceId,
+        gatewayModel,
+        configuredModel,
+        message,
+        historyCount: history.length,
+        imageCount: images.length,
+        responseJson: json,
+      });
+      this.paths.writeGatewayRuntimeUsageByTrace(runtimeUsageRecord, traceId);
+      onLog?.(`resp shape ${this.summarizeResponseShape(json)}`);
+      const content = await this.extractReplyContent(json);
+      const text = this.summarizeMessageContent(content) || '(无回复内容)';
+      onLog?.(`reply len=${text.length}`);
+      return content || '(无回复内容)';
+    }
+
     const schemaDump = this.buildHttpPreflightDump(
       promptContextPath,
       gatewayModel,
@@ -860,6 +967,7 @@ export class ChatService {
       try {
         const reply = await this.chatHttp(
           `openclaw/${selected.id}`,
+          this.getConfiguredModelFull(selected.id) || '(unset)',
           this.paths.workerAgentWorkspacePath(selected.id),
           trimmed,
           images ?? [],
@@ -898,6 +1006,7 @@ export class ChatService {
       try {
         const reply = await this.chatHttp(
           'openclaw',
+          this.getConfiguredModelFull(selected.id) || '(unset)',
           this.paths.workerAgentWorkspacePath(selected.id),
           trimmed,
           images ?? [],
@@ -973,8 +1082,19 @@ export class ChatService {
   saveChatHistory(data: { messages: Record<string, unknown[]>; groupMessages: Record<string, unknown[]> }): void {
     const p = path.join(require('electron').app.getPath('userData'), 'chat-history.json');
     const sanitizedMessages: Record<string, unknown[]> = {};
+    const sanitizedGroupMessages: Record<string, unknown[]> = {};
     for (const [workerId, list] of Object.entries(data?.messages ?? {})) {
       sanitizedMessages[workerId] = (Array.isArray(list) ? list : []).map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const row = item as Record<string, unknown>;
+        return {
+          ...row,
+          content: this.sanitizeHistoryMessageContent(row.content),
+        };
+      });
+    }
+    for (const [groupId, list] of Object.entries(data?.groupMessages ?? {})) {
+      sanitizedGroupMessages[groupId] = (Array.isArray(list) ? list : []).map((item) => {
         if (!item || typeof item !== 'object') return item;
         const row = item as Record<string, unknown>;
         return {
@@ -987,9 +1107,47 @@ export class ChatService {
       p,
       JSON.stringify({
         messages: sanitizedMessages,
-        groupMessages: data?.groupMessages ?? {},
+        groupMessages: sanitizedGroupMessages,
       }),
       'utf8'
     );
+  }
+
+  async saveImage(msgId: string, dataUrl: string): Promise<{ ok: boolean; canceled?: boolean; savedPath?: string; error?: string }> {
+    const trimmed = (dataUrl || '').trim();
+    if (!trimmed.startsWith('data:image/')) {
+      return { ok: false, error: '图片数据无效' };
+    }
+
+    const image = nativeImage.createFromDataURL(trimmed);
+    if (image.isEmpty()) {
+      return { ok: false, error: '图片解码失败' };
+    }
+
+    const baseName = ((msgId || 'image').trim() || 'image').replace(/[\\/:*?"<>|]/g, '_');
+    const defaultPath = path.join(app.getPath('documents'), `${baseName}.png`);
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return { ok: false, error: '主窗口不可用' };
+
+    const saveResult = await dialog.showSaveDialog(win, {
+      title: '保存图片',
+      defaultPath,
+      filters: [{ name: 'PNG Image', extensions: ['png'] }],
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { ok: false, canceled: true };
+    }
+
+    const savePath = saveResult.filePath.toLowerCase().endsWith('.png')
+      ? saveResult.filePath
+      : `${saveResult.filePath}.png`;
+
+    try {
+      fs.writeFileSync(savePath, image.toPNG());
+      return { ok: true, savedPath: savePath };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 }

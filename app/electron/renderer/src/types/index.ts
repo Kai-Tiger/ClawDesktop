@@ -109,6 +109,12 @@ export interface SkillInstallResult {
   skills?: SkillMeta[];
 }
 
+export interface SkillImportSource {
+  path: string;
+  kind: 'directory' | 'skillFile';
+  suggestedName?: string;
+}
+
 export interface GroupChannel {
   id: string;
   name: string;
@@ -122,6 +128,7 @@ export interface GroupMessage {
   workerId?: string;
   workerName?: string;
   content: MessageContent;
+  timestamp?: number;
 }
 
 export interface CoordinatorTask {

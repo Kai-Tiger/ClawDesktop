@@ -7,6 +7,30 @@ import type { SessionService } from './session-service';
 import type { GatewayService } from './gateway-service';
 
 export class ConfigService {
+  private readonly imagePresetModel = 'google/gemini-3.1-flash-image-preview';
+
+  private readonly imagePresetToolDeny = [
+    'read',
+    'edit',
+    'write',
+    'exec',
+    'process',
+    'canvas',
+    'nodes',
+    'message',
+    'tts',
+    'memory_get',
+    'memory_set',
+    'memory_list',
+    'memory_delete',
+    'session_status',
+    'web_search',
+    'web_fetch',
+    'webfetch',
+    'sessions_spawn',
+    'sessions_yield',
+  ];
+
   constructor(
     private readonly paths: OpenClawPaths,
     private readonly sessions: SessionService,
@@ -25,6 +49,21 @@ export class ConfigService {
       return typeof full === 'string' ? full : '';
     } catch {
       return '';
+    }
+  }
+
+  getWorkerConfiguredModelFull(workerId: string): string {
+    const id = (workerId || '').trim();
+    if (!id) return this.getConfiguredModelFull();
+    const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
+    try {
+      const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const agents = Array.isArray(raw?.agents?.list) ? raw.agents.list : [];
+      const found = agents.find((a: { id?: string; model?: string }) => a?.id === id);
+      const full = typeof found?.model === 'string' ? found.model : '';
+      return full || this.getConfiguredModelFull();
+    } catch {
+      return this.getConfiguredModelFull();
     }
   }
 
@@ -116,6 +155,52 @@ export class ConfigService {
       this.sessions.clearAgentSessionSnapshot(id);
       await this.gateway.restartGateway();
       return { ok: true };
+    } catch (err: unknown) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async applyWorkerImagePreset(workerId: string): Promise<{ ok: boolean; error?: string; model?: string }> {
+    const id = (workerId || '').trim();
+    if (!id) return { ok: false, error: 'workerId 不能为空' };
+
+    const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
+    try {
+      const raw = fs.existsSync(configPath)
+        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+        : {};
+      raw.agents = raw.agents || {};
+      raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
+
+      const fullModel = `openrouter/${this.imagePresetModel}`;
+      const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === id);
+      const nextTools = {
+        profile: 'minimal',
+        allow: [],
+        deny: [...this.imagePresetToolDeny],
+      };
+      if (idx >= 0) {
+        raw.agents.list[idx] = {
+          ...raw.agents.list[idx],
+          model: fullModel,
+          tools: nextTools,
+        };
+      } else {
+        raw.agents.list.push({ id, model: fullModel, tools: nextTools });
+      }
+
+      fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
+      const saved = this.getWorkerModel(id);
+      if (saved !== this.imagePresetModel) {
+        return {
+          ok: false,
+          error: `配置未能写入：期望 ${this.imagePresetModel}，实际读到 ${saved || '(空)'}`,
+        };
+      }
+
+      this.sessions.clearAgentSessionSnapshot(id);
+      await this.gateway.restartGateway();
+      return { ok: true, model: this.imagePresetModel };
     } catch (err: unknown) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

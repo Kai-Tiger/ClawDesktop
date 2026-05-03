@@ -37,8 +37,8 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   workerReadSkill: (workerId: string, skillId: string) => ipcRenderer.invoke('workers:read-skill', workerId, skillId),
   workerSaveSkill: (workerId: string, skillId: string, content: string) =>
     ipcRenderer.invoke('workers:save-skill', workerId, skillId, content),
-  workerInstallSkillFromDir: (workerId: string, skillDirPath: string) =>
-    ipcRenderer.invoke('workers:install-skill-from-dir', workerId, skillDirPath),
+  workerInstallSkillFromDir: (workerId: string, skillDirPath: string, skillName?: string) =>
+    ipcRenderer.invoke('workers:install-skill-from-dir', workerId, skillDirPath, skillName),
   groupsList: () => ipcRenderer.invoke('groups:list'),
   groupsCreate: (name: string, workerIds: string[]) => ipcRenderer.invoke('groups:create', name, workerIds),
   groupsDelete: (id: string) => ipcRenderer.invoke('groups:delete', id),
@@ -55,9 +55,11 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   setModel: (model: string) => ipcRenderer.invoke('settings:setModel', model),
   getWorkerModel: (workerId: string) => ipcRenderer.invoke('settings:getWorkerModel', workerId),
   setWorkerModel: (workerId: string, model: string) => ipcRenderer.invoke('settings:setWorkerModel', workerId, model),
+  applyWorkerImagePreset: (workerId: string) => ipcRenderer.invoke('settings:applyWorkerImagePreset', workerId),
   workerDelete: (workerId: string) => ipcRenderer.invoke('workers:delete', workerId),
   getChatHistory: () => ipcRenderer.invoke('chat:getHistory'),
   saveHistory: (data: unknown) => ipcRenderer.send('chat:saveHistory', data),
+  saveChatImage: (msgId: string, dataUrl: string) => ipcRenderer.invoke('chat:saveImage', { msgId, dataUrl }),
   clearWorkerSessions: (workerIds: string[], groupId?: string) => ipcRenderer.invoke('chat:clearWorkerSessions', workerIds, groupId),
   coordinatorGetModel: () => ipcRenderer.invoke('coordinator:getModel'),
   coordinatorSetModel: (model: string) => ipcRenderer.invoke('coordinator:setModel', model),

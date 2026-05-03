@@ -16,7 +16,7 @@ import {
   workerUpdateMeta,
   clearWorkerSessions,
 } from "../../api/gateway";
-import type { WorkerZipProbe, SkillMeta } from "../../types";
+import type { WorkerZipProbe, SkillMeta, SkillImportSource } from "../../types";
 import { ImportWorkerDialog } from "./ImportWorkerDialog";
 import { DeleteWorkerDialog } from "./DeleteWorkerDialog";
 import styles from "./WorkerList.module.css";
@@ -50,6 +50,13 @@ export function WorkerList({
   const [installingSkillWorkerId, setInstallingSkillWorkerId] = useState<
     string | null
   >(null);
+  const [pendingSkillFileImport, setPendingSkillFileImport] = useState<{
+    workerId: string;
+    skillFilePath: string;
+    skillName: string;
+  } | null>(null);
+  const [pendingSkillFileImportError, setPendingSkillFileImportError] =
+    useState("");
   const [activeSkillTooltip, setActiveSkillTooltip] = useState<string | null>(
     null,
   );
@@ -277,21 +284,71 @@ export function WorkerList({
   }
 
   async function handleSkillImportClick(workerId: string) {
-    if (installingSkillWorkerId) return;
+    if (installingSkillWorkerId || pendingSkillFileImport) return;
     setProbeError("");
     setInstallingSkillWorkerId(workerId);
     try {
-      const skillDirPath = await workerOpenSkillDirDialog();
-      if (!skillDirPath) return;
-      const result = await workerInstallSkillFromDir(workerId, skillDirPath);
-      if (!result.ok) {
-        setProbeError(result.error || "加载 skill 失败");
+      const selectedSource = await workerOpenSkillDirDialog();
+      if (!selectedSource) return;
+      if (selectedSource.kind === "skillFile") {
+        setPendingSkillFileImportError("");
+        setPendingSkillFileImport({
+          workerId,
+          skillFilePath: selectedSource.path,
+          skillName: selectedSource.suggestedName || "",
+        });
         return;
       }
-      setSkillsMap((prev) => ({ ...prev, [workerId]: result.skills ?? [] }));
-      await clearWorkerSessions([workerId]);
-    } catch {
-      setProbeError("加载 skill 失败");
+      await installSkill(workerId, selectedSource);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "";
+      setProbeError(message || "加载 skill 失败");
+    } finally {
+      setInstallingSkillWorkerId(null);
+    }
+  }
+
+  async function installSkill(
+    workerId: string,
+    selectedSource: SkillImportSource,
+    skillName?: string,
+  ) {
+    const result = await workerInstallSkillFromDir(
+      workerId,
+      selectedSource.path,
+      skillName,
+    );
+    if (!result.ok) {
+      throw new Error(result.error || "加载 skill 失败");
+    }
+    setSkillsMap((prev) => ({ ...prev, [workerId]: result.skills ?? [] }));
+    await clearWorkerSessions([workerId]);
+  }
+
+  async function handleSkillFileImportConfirm() {
+    if (!pendingSkillFileImport || installingSkillWorkerId) return;
+    const skillName = pendingSkillFileImport.skillName.trim();
+    if (!skillName) {
+      setPendingSkillFileImportError("Skill 名称不能为空");
+      return;
+    }
+
+    setPendingSkillFileImportError("");
+    setProbeError("");
+    setInstallingSkillWorkerId(pendingSkillFileImport.workerId);
+    try {
+      await installSkill(
+        pendingSkillFileImport.workerId,
+        {
+          path: pendingSkillFileImport.skillFilePath,
+          kind: "skillFile",
+        },
+        skillName,
+      );
+      setPendingSkillFileImport(null);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "";
+      setPendingSkillFileImportError(message || "加载 skill 失败");
     } finally {
       setInstallingSkillWorkerId(null);
     }
@@ -601,6 +658,72 @@ export function WorkerList({
               )}
               {skillError && (
                 <div className={styles.editorError}>{skillError}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingSkillFileImport && (
+        <div
+          className={styles.editorOverlay}
+          onClick={() => {
+            if (!installingSkillWorkerId) {
+              setPendingSkillFileImport(null);
+              setPendingSkillFileImportError("");
+            }
+          }}
+        >
+          <div
+            className={styles.metaDialog}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={styles.editorHeader}>
+              <div className={styles.editorTitle}>设置 Skill 名称</div>
+              <div className={styles.editorActions}>
+                <button
+                  className={styles.editorBtn}
+                  onClick={() => {
+                    setPendingSkillFileImport(null);
+                    setPendingSkillFileImportError("");
+                  }}
+                  disabled={Boolean(installingSkillWorkerId)}
+                >
+                  取消
+                </button>
+                <button
+                  className={styles.editorPrimaryBtn}
+                  onClick={() => void handleSkillFileImportConfirm()}
+                  disabled={Boolean(installingSkillWorkerId)}
+                >
+                  {installingSkillWorkerId ? "导入中…" : "确定"}
+                </button>
+              </div>
+            </div>
+            <div className={styles.metaDialogBody}>
+              <label className={styles.metaLabel}>
+                <span className={styles.metaLabelText}>Skill 名称</span>
+                <input
+                  className={styles.metaInput}
+                  value={pendingSkillFileImport.skillName}
+                  onChange={(e) => {
+                    setPendingSkillFileImport((prev) =>
+                      prev
+                        ? { ...prev, skillName: e.target.value }
+                        : prev,
+                    );
+                    if (pendingSkillFileImportError) {
+                      setPendingSkillFileImportError("");
+                    }
+                  }}
+                  placeholder="请输入 Skill 名称"
+                  autoFocus
+                />
+              </label>
+              {pendingSkillFileImportError && (
+                <div className={styles.editorError}>
+                  {pendingSkillFileImportError}
+                </div>
               )}
             </div>
           </div>

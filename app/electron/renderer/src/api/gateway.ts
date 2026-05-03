@@ -12,6 +12,7 @@ import type {
   SkillContentResult,
   SkillInstallResult,
   SkillMeta,
+  SkillImportSource,
   GroupChannel,
   ImageInput,
   MessageContent,
@@ -35,7 +36,7 @@ interface GatewayApi {
   telegramAdd: (token: string, workerId?: string) => Promise<TelegramAddResult>;
   telegramRemove: (accountId: string) => Promise<{ ok: boolean; error?: string }>;
   workerOpenFileDialog: () => Promise<string | null>;
-  workerOpenSkillDirDialog: () => Promise<string | null>;
+  workerOpenSkillDirDialog: () => Promise<SkillImportSource | null>;
   workerGetInternZipPath: () => Promise<string>;
   workerGetBlankZipPath: () => Promise<string>;
   workerProbeZip: (zipPath: string) => Promise<WorkerZipProbe>;
@@ -44,7 +45,7 @@ interface GatewayApi {
   workerListSkills: (workerId: string) => Promise<SkillMeta[]>;
   workerReadSkill: (workerId: string, skillId: string) => Promise<SkillContentResult>;
   workerSaveSkill: (workerId: string, skillId: string, content: string) => Promise<SkillContentResult>;
-  workerInstallSkillFromDir: (workerId: string, skillDirPath: string) => Promise<SkillInstallResult>;
+  workerInstallSkillFromDir: (workerId: string, skillDirPath: string, skillName?: string) => Promise<SkillInstallResult>;
   groupsList: () => Promise<GroupChannel[]>;
   groupsCreate: (name: string, workerIds: string[]) => Promise<GroupChannel>;
   groupsDelete: (id: string) => Promise<{ ok: boolean }>;
@@ -61,9 +62,11 @@ interface GatewayApi {
   setModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
   getWorkerModel: (workerId: string) => Promise<string>;
   setWorkerModel: (workerId: string, model: string) => Promise<{ ok: boolean; error?: string }>;
+  applyWorkerImagePreset: (workerId: string) => Promise<{ ok: boolean; error?: string; model?: string }>;
   workerDelete: (workerId: string) => Promise<{ ok: boolean; error?: string }>;
   getChatHistory: () => Promise<ChatHistory>;
   saveHistory: (data: ChatHistory) => void;
+  saveChatImage: (msgId: string, dataUrl: string) => Promise<{ ok: boolean; canceled?: boolean; savedPath?: string; error?: string }>;
   clearWorkerSessions: (workerIds: string[], groupId?: string) => Promise<void>;
   coordinatorGetModel: () => Promise<string>;
   coordinatorSetModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
@@ -103,7 +106,7 @@ export const workerExport = (workerId: string) => api().workerExport(workerId);
 export const workerListSkills = (workerId: string) => api().workerListSkills(workerId);
 export const workerReadSkill = (workerId: string, skillId: string) => api().workerReadSkill(workerId, skillId);
 export const workerSaveSkill = (workerId: string, skillId: string, content: string) => api().workerSaveSkill(workerId, skillId, content);
-export const workerInstallSkillFromDir = (workerId: string, skillDirPath: string) => api().workerInstallSkillFromDir(workerId, skillDirPath);
+export const workerInstallSkillFromDir = (workerId: string, skillDirPath: string, skillName?: string) => api().workerInstallSkillFromDir(workerId, skillDirPath, skillName);
 export const groupsList = () => api().groupsList();
 export const groupsCreate = (name: string, workerIds: string[]) => api().groupsCreate(name, workerIds);
 export const groupsDelete = (id: string) => api().groupsDelete(id);
@@ -120,9 +123,11 @@ export const getModel = () => api().getModel();
 export const setModel = (model: string) => api().setModel(model);
 export const getWorkerModel = (workerId: string) => api().getWorkerModel(workerId);
 export const setWorkerModel = (workerId: string, model: string) => api().setWorkerModel(workerId, model);
+export const applyWorkerImagePreset = (workerId: string) => api().applyWorkerImagePreset(workerId);
 export const workerDelete = (workerId: string) => api().workerDelete(workerId);
 export const getChatHistory = () => api().getChatHistory();
 export const saveHistory = (data: ChatHistory) => api().saveHistory(data);
+export const saveChatImage = (msgId: string, dataUrl: string) => api().saveChatImage(msgId, dataUrl);
 export const clearWorkerSessions = (workerIds: string[], groupId?: string) => api().clearWorkerSessions(workerIds, groupId);
 export const coordinatorGetModel = () => api().coordinatorGetModel();
 export const coordinatorSetModel = (model: string) => api().coordinatorSetModel(model);

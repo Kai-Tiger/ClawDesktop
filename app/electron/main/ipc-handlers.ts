@@ -33,6 +33,7 @@ export function registerIpcHandlers(opts: {
   ipcMain.handle('settings:setModel', async (_evt, model: string) => config.setModel(model));
   ipcMain.handle('settings:getWorkerModel', (_evt, workerId: string) => config.getWorkerModel(workerId));
   ipcMain.handle('settings:setWorkerModel', async (_evt, workerId: string, model: string) => config.setWorkerModel(workerId, model));
+  ipcMain.handle('settings:applyWorkerImagePreset', async (_evt, workerId: string) => config.applyWorkerImagePreset(workerId));
   ipcMain.handle('workers:list', async () => workers.listWorkers());
   ipcMain.handle('channels:telegram:list', async () => telegram.listTelegramChannels());
   ipcMain.handle('channels:telegram:add', async (_evt, token: string, workerId?: string) => telegram.addTelegramChannel(token, workerId));
@@ -42,12 +43,15 @@ export function registerIpcHandlers(opts: {
   });
   ipcMain.handle('chat:getHistory', () => chat.getChatHistory());
   ipcMain.on('chat:saveHistory', (_evt, data) => chat.saveChatHistory(data));
+  ipcMain.handle('chat:saveImage', (_evt, payload: { msgId?: string; dataUrl?: string }) => {
+    return chat.saveImage(payload?.msgId || '', payload?.dataUrl || '');
+  });
   ipcMain.handle('workers:open-file-dialog', () => workers.openFileDialog());
   ipcMain.handle('workers:open-skill-dir-dialog', () => workers.openSkillDirDialog());
   ipcMain.handle('workers:get-intern-zip-path', () => workers.getInternZipPath());
   ipcMain.handle('workers:get-blank-zip-path', () => workers.getBlankZipPath());
-  ipcMain.handle('workers:install-skill-from-dir', (_evt, workerId: string, skillDirPath: string) =>
-    workers.installSkillFromDir(workerId, skillDirPath)
+  ipcMain.handle('workers:install-skill-from-dir', (_evt, workerId: string, skillDirPath: string, skillName?: string) =>
+    workers.installSkillFromDir(workerId, skillDirPath, skillName)
   );
   ipcMain.handle('workers:probe-zip', async (_evt, zipPath: string) => workers.probeWorkerZip(zipPath));
   ipcMain.handle('workers:install-from-temp', async (_evt, tempDir: string, rootDir: string, id: string, name: string, description: string) =>

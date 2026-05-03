@@ -83,7 +83,20 @@
 .msgLabel {
   font-size: 11px;
   color: #9ca3af;
+  margin-bottom: 0;
+}
+
+.msgLabelRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 4px;
+}
+
+.msgTime {
+  font-size: 10px;
+  color: #c4c9d2;
+  user-select: none;
 }
 
 .workerLabel {
@@ -118,6 +131,77 @@
   color: #b0b0b0;
   font-family: monospace;
   user-select: all;
+}
+
+.groupImageRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.groupImage {
+  max-height: 240px;
+  max-width: min(320px, 85vw);
+  border-radius: 10px;
+  border: 1px solid #d5dbe8;
+  background: #fff;
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+.imageDownloadBtn {
+  margin-top: 4px;
+  height: 28px;
+  width: 28px;
+  border-radius: 6px;
+  border: 1px dashed #d1d5db;
+  background: rgba(255, 255, 255, 0.95);
+  color: #4b5563;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.groupImageRow:hover .imageDownloadBtn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.imageDownloadBtn:hover {
+  background: #f9fafb;
+}
+
+.imageDownloadIcon {
+  width: 16px;
+  height: 16px;
+}
+
+.imagePreviewOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+}
+
+.imagePreviewStage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.imagePreviewImage {
+  display: block;
+  object-fit: contain;
 }
 
 .thinking {

@@ -114,7 +114,7 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => ({
       groupMessages: {
         ...state.groupMessages,
-        [groupId]: [...(state.groupMessages[groupId] ?? []), msg],
+        [groupId]: [...(state.groupMessages[groupId] ?? []), { ...msg, timestamp: msg.timestamp ?? Date.now() }],
       },
     })),
 

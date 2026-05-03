@@ -3,7 +3,7 @@ import type { ChatMessage } from "../../types";
 import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { traceMessageChain, workerOpenFileLocation } from "../../api/gateway";
+import { saveChatImage, traceMessageChain, workerOpenFileLocation } from "../../api/gateway";
 
 const FILE_BLOCK_DISPLAY_LINES = 10;
 
@@ -20,6 +20,17 @@ function looksLikeFilePath(text: string): boolean {
 
 function normalizeNewlines(text: string) {
   return text.replace(/\n{2,}/g, "\n");
+}
+
+function formatDateTime(timestamp?: number): string {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `${month}/${day} ${hh}:${mm}:${ss}`;
 }
 
 function truncateFileBlocks(text: string): string {
@@ -55,6 +66,26 @@ export function MessageBubble({
   const [isTraceModalOpen, setIsTraceModalOpen] = React.useState(false);
   const [isTraceLoading, setIsTraceLoading] = React.useState(false);
   const [traceOutput, setTraceOutput] = React.useState("");
+  const [previewImage, setPreviewImage] = React.useState<{
+    src: string;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const openImagePreview = React.useCallback((src: string, width: number, height: number) => {
+    setPreviewImage({ src, width, height });
+  }, []);
+
+  const closeImagePreview = React.useCallback(() => {
+    setPreviewImage(null);
+  }, []);
+
+  const handleSaveImage = React.useCallback(async (src: string) => {
+    const result = await saveChatImage(msgId || "image", src);
+    if (!result?.ok && !result?.canceled) {
+      window.alert(result?.error || "保存图片失败");
+    }
+  }, [msgId]);
 
   const handleMsgIdClick = React.useCallback(async () => {
     if (!msgId) return;
@@ -135,27 +166,12 @@ export function MessageBubble({
   }
 
   const displayName = role === "user" ? "你" : (workerName ?? "Assistant");
-  const timeStr = timestamp
-    ? new Date(timestamp).toLocaleTimeString("zh-CN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      })
-    : "";
+  const timeStr = formatDateTime(timestamp);
 
   const isThinking =
     typeof content === "string" &&
     (content === "思考中…" || content === "思考中...");
-  const completedTimeStr =
-    completedAt && !isThinking
-      ? new Date(completedAt).toLocaleTimeString("zh-CN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        })
-      : "";
+  const completedTimeStr = completedAt && !isThinking ? formatDateTime(completedAt) : "";
 
   return (
     <div className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}>
@@ -195,12 +211,32 @@ export function MessageBubble({
               );
             }
             return (
-              <img
-                key={`i-${idx}`}
-                className="max-h-60 max-w-[min(320px,85vw)] rounded-[10px] border border-[#d5dbe8] bg-white object-contain"
-                src={`data:${block.mediaType};base64,${block.data}`}
-                alt="用户上传图片"
-              />
+              <div key={`i-${idx}`} className="group flex items-start justify-end gap-2">
+                <img
+                  className="max-h-60 max-w-[min(320px,85vw)] cursor-zoom-in rounded-[10px] border border-[#d5dbe8] bg-white object-contain"
+                  src={`data:${block.mediaType};base64,${block.data}`}
+                  alt="用户上传图片"
+                  onClick={(e) =>
+                    openImagePreview(
+                      `data:${block.mediaType};base64,${block.data}`,
+                      e.currentTarget.naturalWidth,
+                      e.currentTarget.naturalHeight
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  className="pointer-events-none mt-1 inline-flex h-7 w-7 items-center justify-center rounded border border-dashed border-gray-300 bg-white/95 text-gray-600 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-gray-50"
+                  onClick={() => void handleSaveImage(`data:${block.mediaType};base64,${block.data}`)}
+                  title="下载图片"
+                  aria-label="下载图片"
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                    <path d="M10 3v8m0 0l-3-3m3 3l3-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M4 13.5v1a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0016 14.5v-1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
             );
           })}
           {role === "assistant" && msgId && (
@@ -215,6 +251,31 @@ export function MessageBubble({
               {completedTimeStr ? ` · 完成 ${completedTimeStr}` : ""}
             </div>
           )}
+        </div>
+      )}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/65 px-6 py-8"
+          onClick={closeImagePreview}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <img
+              src={previewImage.src}
+              alt="预览图片"
+              className="block object-contain"
+              style={
+                previewImage.width >= previewImage.height
+                  ? {
+                    width: "calc(100vw - 200px)",
+                    maxHeight: "calc(100vh - 100px)",
+                  }
+                  : {
+                    height: "calc(100vh - 100px)",
+                    maxWidth: "calc(100vw - 200px)",
+                  }
+              }
+            />
+          </div>
         </div>
       )}
       {isTraceModalOpen && (

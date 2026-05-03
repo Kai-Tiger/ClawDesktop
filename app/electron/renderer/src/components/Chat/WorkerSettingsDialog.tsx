@@ -3,6 +3,7 @@ import {
   telegramAdd,
   telegramList,
   telegramRemove,
+  applyWorkerImagePreset,
   getWorkerModel,
   setWorkerModel,
 } from "../../api/gateway";
@@ -11,6 +12,10 @@ import type { TelegramChannel } from "../../types";
 import styles from "./WorkerSettingsDialog.module.css";
 
 const BUILTIN_MODELS = [
+  {
+    id: "google/gemini-3.1-flash-image-preview",
+    label: "Gemini 3.1 Flash Image (生图)",
+  },
   { id: "minimax/minimax-m2.5", label: "MiniMax M2.5" },
   { id: "xiaomi/mimo-v2-pro", label: "MiMo v2 Pro" },
   { id: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
@@ -21,6 +26,7 @@ const BUILTIN_MODELS = [
 ];
 
 const CUSTOM_MODELS_KEY = "openclaw_custom_models";
+const IMAGE_PRESET_MODEL = "google/gemini-3.1-flash-image-preview";
 
 function loadCustomModels(): { id: string; label: string }[] {
   try {
@@ -53,6 +59,7 @@ export function WorkerSettingsDialog({
   const [modelCurrent, setModelCurrent] = useState("");
   const [modelSelected, setModelSelected] = useState("");
   const [modelSaving, setModelSaving] = useState(false);
+  const [presetSaving, setPresetSaving] = useState(false);
   const [customModels, setCustomModels] =
     useState<{ id: string; label: string }[]>(loadCustomModels);
   const [customInput, setCustomInput] = useState("");
@@ -186,6 +193,26 @@ export function WorkerSettingsDialog({
     }
   };
 
+  const handleApplyImagePreset = async () => {
+    if (!workerId || presetSaving) return;
+    setPresetSaving(true);
+    setStatus("应用生图配置中…");
+    try {
+      const res = await applyWorkerImagePreset(workerId);
+      if (!res.ok) {
+        setStatus(res.error ?? "应用生图配置失败");
+        return;
+      }
+      setModelCurrent(IMAGE_PRESET_MODEL);
+      setModelSelected(IMAGE_PRESET_MODEL);
+      setStatus("生图专用配置已生效（已切换模型并禁用工具调用）");
+    } catch (err: unknown) {
+      setStatus(`应用生图配置失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPresetSaving(false);
+    }
+  };
+
   return (
     <div className={styles.overlay}>
       <div className={styles.dialog}>
@@ -227,6 +254,13 @@ export function WorkerSettingsDialog({
               disabled={!isModelDirty || modelSaving}
             >
               {modelSaving ? "..." : "保存"}
+            </button>
+            <button
+              className={styles.bindBtn}
+              onClick={handleApplyImagePreset}
+              disabled={presetSaving}
+            >
+              {presetSaving ? "..." : "一键生图配置"}
             </button>
           </div>
 

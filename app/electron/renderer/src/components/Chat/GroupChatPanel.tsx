@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useChatStore } from '../../store/chatStore';
-import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, workerOpenFileLocation, openLogsDir } from '../../api/gateway';
+import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, workerOpenFileLocation, openLogsDir, saveChatImage } from '../../api/gateway';
 import type { GroupMessage, WorkerMeta, CoordinatorPlan, MessageContent, ContentBlock } from '../../types';
 import styles from './GroupChatPanel.module.css';
 
@@ -39,6 +39,17 @@ function makeMsgId(): string {
 
 function normalizeNewlines(text: string) {
   return text.replace(/\n{2,}/g, '\n');
+}
+
+function formatMessageTime(timestamp?: number): string {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${month}/${day} ${hh}:${mm}:${ss}`;
 }
 
 const FILE_EXT_RE = /\.(ts|tsx|js|jsx|json|md|txt|py|css|html|htm|yaml|yml|sh|bash|env|toml|xml|csv|sql|go|rs|java|kt|swift|rb|php|c|cpp|h|vue|svelte|lock|log|conf|cfg)$/i;
@@ -131,11 +142,23 @@ export function GroupChatPanel() {
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [showAddWorker, setShowAddWorker] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ src: string; width: number; height: number } | null>(null);
   const setGroups = useChatStore((s) => s.setGroups);
   const groups2 = useChatStore((s) => s.groups);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const openImagePreview = (src: string, width: number, height: number) => {
+    setPreviewImage({ src, width, height });
+  };
+
+  const handleSaveImage = async (msgId: string | undefined, src: string) => {
+    const result = await saveChatImage(msgId || 'image', src);
+    if (!result?.ok && !result?.canceled) {
+      window.alert(result?.error || '保存图片失败');
+    }
+  };
 
   // Per-worker sequential processing chains: key = `${groupId}:${workerId}`
   const chains = useRef<Map<string, Promise<void>>>(new Map());
@@ -600,18 +623,23 @@ export function GroupChatPanel() {
             ) : null
           ) : (
             <div key={msg.id} className={`${styles.msg} ${styles[msg.role]}`}>
-              {msg.role === 'user' ? (
-                <div className={styles.msgLabel}>你</div>
-              ) : (
-                <div className={styles.msgLabel}>
-                  <span
-                    className={styles.workerLabel}
-                    style={{ color: workerColor(msg.workerId ?? '', workerIds) }}
-                  >
-                    {msg.workerName}
-                  </span>
-                </div>
-              )}
+              <div className={styles.msgLabelRow}>
+                {msg.role === 'user' ? (
+                  <div className={styles.msgLabel}>你</div>
+                ) : (
+                  <div className={styles.msgLabel}>
+                    <span
+                      className={styles.workerLabel}
+                      style={{ color: workerColor(msg.workerId ?? '', workerIds) }}
+                    >
+                      {msg.workerName}
+                    </span>
+                  </div>
+                )}
+                {!!msg.timestamp && (
+                  <span className={styles.msgTime}>{formatMessageTime(msg.timestamp)}</span>
+                )}
+              </div>
               <div className={`${styles.bubble} ${isThinkingGroupContent(msg.content) ? styles.thinking : ''}`}>
                 {isThinkingGroupContent(msg.content) ? msg.content : (
                   typeof msg.content === 'string' ? (
@@ -633,12 +661,32 @@ export function GroupChatPanel() {
                           );
                         }
                         return (
-                          <img
-                            key={`i-${msg.id}-${idx}`}
-                            src={`data:${block.mediaType};base64,${block.data}`}
-                            alt="群聊生成图片"
-                            style={{ maxHeight: 240, maxWidth: 'min(320px, 85vw)', borderRadius: 10, border: '1px solid #d5dbe8', background: '#fff', objectFit: 'contain' }}
-                          />
+                          <div key={`i-${msg.id}-${idx}`} className={styles.groupImageRow}>
+                            <img
+                              src={`data:${block.mediaType};base64,${block.data}`}
+                              alt="群聊生成图片"
+                              className={styles.groupImage}
+                              onClick={(e) =>
+                                openImagePreview(
+                                  `data:${block.mediaType};base64,${block.data}`,
+                                  e.currentTarget.naturalWidth,
+                                  e.currentTarget.naturalHeight
+                                )
+                              }
+                            />
+                            <button
+                              type="button"
+                              className={styles.imageDownloadBtn}
+                              onClick={() => void handleSaveImage(msg.msgId, `data:${block.mediaType};base64,${block.data}`)}
+                              title="下载图片"
+                              aria-label="下载图片"
+                            >
+                              <svg viewBox="0 0 20 20" fill="none" className={styles.imageDownloadIcon} aria-hidden="true">
+                                <path d="M10 3v8m0 0l-3-3m3 3l3-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <path d="M4 13.5v1a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0016 14.5v-1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                              </svg>
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -720,6 +768,25 @@ export function GroupChatPanel() {
           </button>
         </div>
       </div>
+      {previewImage && (
+        <div
+          className={styles.imagePreviewOverlay}
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className={styles.imagePreviewStage} onClick={(e) => e.stopPropagation()}>
+            <img
+              src={previewImage.src}
+              alt="预览图片"
+              className={styles.imagePreviewImage}
+              style={
+                previewImage.width >= previewImage.height
+                  ? { width: 'calc(100vw - 200px)', maxHeight: 'calc(100vh - 100px)' }
+                  : { height: 'calc(100vh - 100px)', maxWidth: 'calc(100vw - 200px)' }
+              }
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
