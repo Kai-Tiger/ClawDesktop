@@ -118,6 +118,12 @@ export function Composer() {
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [attachError, setAttachError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{
+    src: string;
+    width: number;
+    height: number;
+    name: string;
+  } | null>(null);
 
   const addImages = async (files: File[]) => {
     const imgs = files.filter((f) => ALLOWED_IMAGE_TYPES.has(f.type));
@@ -247,6 +253,14 @@ export function Composer() {
                 src={img.previewUrl}
                 alt={img.name}
                 className={styles.previewImg}
+                onClick={(e) =>
+                  setPreviewImage({
+                    src: img.previewUrl,
+                    width: e.currentTarget.naturalWidth,
+                    height: e.currentTarget.naturalHeight,
+                    name: img.name,
+                  })
+                }
               />
               <button
                 className={styles.previewDelete}
@@ -293,11 +307,37 @@ export function Composer() {
 
       {attachError && <div className={styles.error}>{attachError}</div>}
 
-      <div className={styles.composerToolbar}>
-        <button
-          className={styles.clearBtn}
-          onClick={handleClear}
+      {previewImage && (
+        <div
+          className={styles.imagePreviewOverlay}
+          onClick={() => setPreviewImage(null)}
         >
+          <div
+            className={styles.imagePreviewStage}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={previewImage.src}
+              alt={previewImage.name}
+              className={styles.imagePreviewImage}
+              style={
+                previewImage.width >= previewImage.height
+                  ? {
+                      width: "calc(100vw - 400px)",
+                      maxHeight: "calc(100vh - 300px)",
+                    }
+                  : {
+                      height: "calc(100vh - 300px)",
+                      maxWidth: "calc(100vw - 400px)",
+                    }
+              }
+            />
+          </div>
+        </div>
+      )}
+
+      <div className={styles.composerToolbar}>
+        <button className={styles.clearBtn} onClick={handleClear}>
           /Clear
         </button>
         <button

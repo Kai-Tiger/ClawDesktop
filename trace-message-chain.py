@@ -555,7 +555,6 @@ def normalize_real_usage(raw_usage: Dict[str, str]) -> Dict[str, Optional[int]]:
         "total_tokens": None,
         "cache_read_tokens": None,
         "input_tokens": None,
-        "output_tokens": None,
     }
 
     for k, v in raw_usage.items():
@@ -574,9 +573,6 @@ def normalize_real_usage(raw_usage: Dict[str, str]) -> Dict[str, Optional[int]]:
             candidates["cache_read_tokens"] = iv
         elif kl.endswith(".input") or kl == "input":
             candidates["input_tokens"] = iv
-        elif kl.endswith(".output") or kl == "output":
-            candidates["output_tokens"] = iv
-
     return candidates
 
 
@@ -1057,6 +1053,7 @@ def main() -> None:
     # print(f"openclaw sessionId: {session_id or 'N/A'}")
     # print(f"provider/model: {status_info.get('provider') or 'N/A'} / {status_info.get('model') or 'N/A'}")
 
+    runtime_usage_obj: Optional[Dict[str, Any]] = find_runtime_usage_by_trace(logs_dir, openclaw_root, message_id, run_id)
     normalized_usage: Dict[str, Optional[int]] = {}
 
     print("\n== Route ==")
@@ -1093,6 +1090,13 @@ def main() -> None:
             joined = " ".join(f"{k}={v}" for k, v in sorted(token_usage.items()))
             print(f"http token usage: {joined}")
             normalized = normalize_real_usage(token_usage)
+            if normalized.get("cache_read_tokens") is None and runtime_usage_obj:
+                raw_usage_obj = runtime_usage_obj.get("rawUsage") if isinstance(runtime_usage_obj.get("rawUsage"), dict) else {}
+                cache_read = to_int(raw_usage_obj.get("cacheRead")) if isinstance(raw_usage_obj, dict) else None
+                if cache_read is not None:
+                    normalized["cache_read_tokens"] = cache_read
+                if normalized.get("input_tokens") is None:
+                    normalized["input_tokens"] = to_int(raw_usage_obj.get("input")) if isinstance(raw_usage_obj, dict) else None
             normalized_usage = normalized
             real_bits = []
             for k in [
@@ -1101,7 +1105,6 @@ def main() -> None:
                 "total_tokens",
                 "cache_read_tokens",
                 "input_tokens",
-                "output_tokens",
             ]:
                 if normalized.get(k) is not None:
                     real_bits.append(f"{k}={normalized[k]}")
@@ -1116,7 +1119,6 @@ def main() -> None:
             print("http token usage: N/A (no usage/token fields found in logs or session custom data)")
 
     dump_obj: Optional[Dict[str, Any]] = None
-    runtime_usage_obj: Optional[Dict[str, Any]] = find_runtime_usage_by_trace(logs_dir, openclaw_root, message_id, run_id)
 
     # print("\n== System Context ==")
     # dump_path = find_tool_schema_dump(logs_dir, message_id)
@@ -1362,8 +1364,8 @@ def main() -> None:
         est_bits.append(f"systemPrompt≈{est_sys}")
     if est_tool is not None:
         est_bits.append(f"tools.schema≈{est_tool}")
-    # if est_skill is not None:
-    #     est_bits.append(f"skills≈{est_skill}")
+    if est_skill is not None:
+        est_bits.append(f"skills≈{est_skill}")
     if est_bits:
         print(ANSI_BOLD_RED + "estimated tokens (chars/4): " + " ".join(est_bits) + ANSI_RESET)
     else:
