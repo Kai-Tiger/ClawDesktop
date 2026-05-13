@@ -13,6 +13,7 @@ import {
   workerSaveSkill,
   workerInstallSkillFromDir,
   workerOpenWorkerDir,
+  workerOpenInCursor,
   workerUpdateMeta,
   clearWorkerSessions,
 } from "../../api/gateway";
@@ -462,6 +463,14 @@ export function WorkerList({
                         onClick={() => void workerOpenWorkerDir(w.id)}
                       >
                         打开目录
+                      </button>
+                      <button
+                        className={styles.workerMenuItem}
+                        onClick={() => void workerOpenInCursor(w.id).then((r) => {
+                          if (!r.ok) window.alert(r.error || '无法打开 Cursor');
+                        })}
+                      >
+                        在 Cursor 中打开
                       </button>
                       <button
                         className={styles.workerMenuItem}

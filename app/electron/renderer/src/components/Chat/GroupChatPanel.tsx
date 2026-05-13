@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
 import { useChatStore } from '../../store/chatStore';
-import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, workerOpenFileLocation, openLogsDir, saveChatImage } from '../../api/gateway';
+import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, groupMemoryRead, groupMemoryWrite } from '../../api/gateway';
+import { MessageBubble } from './MessageBubble';
+import GroupContextDialog from './GroupContextDialog';
 import type { GroupMessage, WorkerMeta, CoordinatorPlan, MessageContent, ContentBlock } from '../../types';
 import styles from './GroupChatPanel.module.css';
 
@@ -35,30 +34,6 @@ function makeId(prefix: string, workerId: string) {
 
 function makeMsgId(): string {
   return Math.random().toString(16).slice(2, 10);
-}
-
-function normalizeNewlines(text: string) {
-  return text.replace(/\n{2,}/g, '\n');
-}
-
-function formatMessageTime(timestamp?: number): string {
-  if (!timestamp) return '';
-  const date = new Date(timestamp);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  const ss = String(date.getSeconds()).padStart(2, '0');
-  return `${month}/${day} ${hh}:${mm}:${ss}`;
-}
-
-const FILE_EXT_RE = /\.(ts|tsx|js|jsx|json|md|txt|py|css|html|htm|yaml|yml|sh|bash|env|toml|xml|csv|sql|go|rs|java|kt|swift|rb|php|c|cpp|h|vue|svelte|lock|log|conf|cfg)$/i;
-
-function looksLikeFilePath(text: string): boolean {
-  if (text.length > 300 || text.includes('\n')) return false;
-  if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) return true;
-  if (FILE_EXT_RE.test(text.trim())) return true;
-  return false;
 }
 
 function perfLog(traceId: string, step: string, extra?: string) {
@@ -99,27 +74,14 @@ function withWorkerPrefix(workerName: string | undefined, content: MessageConten
   return [{ type: 'text', text: prefix }, ...content];
 }
 
-function makeCodeComponents(workerId?: string) {
-  return {
-    code({ children, className, ...props }: React.HTMLAttributes<HTMLElement> & { children?: React.ReactNode }) {
-      const text = String(children).trim();
-      const isBlock = !!className;
-      if (!isBlock && workerId && looksLikeFilePath(text)) {
-        return (
-          <span
-            className={styles.fileLink}
-            onClick={() => void workerOpenFileLocation(workerId, text)}
-            title={`定位文件: ${text}`}
-          >
-            <code className={styles.fileLinkCode}>{children}</code>
-            <span className={styles.fileLinkIcon}>📂</span>
-          </span>
-        );
-      }
-      return <code className={className} {...props}>{children}</code>;
-    },
-  };
+function stripImages(content: MessageContent): MessageContent {
+  if (typeof content === 'string') return content;
+  const textOnly = content.filter((b): b is ContentBlock & { type: 'text' } => b.type === 'text');
+  if (textOnly.length === 0) return '';
+  if (textOnly.length === 1) return textOnly[0].text;
+  return textOnly;
 }
+
 
 
 export function GroupChatPanel() {
@@ -127,7 +89,6 @@ export function GroupChatPanel() {
   const currentGroupId = useChatStore((s) => s.currentGroupId);
   const groupMessages = useChatStore((s) => s.groupMessages);
   const addGroupMessage = useChatStore((s) => s.addGroupMessage);
-  const clearGroupMessages = useChatStore((s) => s.clearGroupMessages);
   const allWorkers = useChatStore((s) => s.workers);
 
   const group = groups.find((g) => g.id === currentGroupId);
@@ -142,23 +103,13 @@ export function GroupChatPanel() {
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [showAddWorker, setShowAddWorker] = useState(false);
-  const [previewImage, setPreviewImage] = useState<{ src: string; width: number; height: number } | null>(null);
+  const [contextDialogOpen, setContextDialogOpen] = useState(false);
   const setGroups = useChatStore((s) => s.setGroups);
   const groups2 = useChatStore((s) => s.groups);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const openImagePreview = (src: string, width: number, height: number) => {
-    setPreviewImage({ src, width, height });
-  };
-
-  const handleSaveImage = async (msgId: string | undefined, src: string) => {
-    const result = await saveChatImage(msgId || 'image', src);
-    if (!result?.ok && !result?.canceled) {
-      window.alert(result?.error || '保存图片失败');
-    }
-  };
 
   // Per-worker sequential processing chains: key = `${groupId}:${workerId}`
   const chains = useRef<Map<string, Promise<void>>>(new Map());
@@ -168,17 +119,33 @@ export function GroupChatPanel() {
   }, [currentGroupId]);
 
   useEffect(() => {
+    if (!currentGroupId) return;
+    const saved = localStorage.getItem(`draft:group:${currentGroupId}`);
+    if (inputRef.current) inputRef.current.value = saved ?? '';
+  }, [currentGroupId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
 
-  const buildHistory = (gid: string) =>
-    (useChatStore.getState().groupMessages[gid] ?? [])
+  const buildHistory = (gid: string) => {
+    const allMessages = useChatStore.getState().groupMessages[gid] ?? [];
+    let startIndex = 0;
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      if (allMessages[i].role === 'system') {
+        startIndex = i + 1;
+        break;
+      }
+    }
+    return allMessages
+      .slice(startIndex)
       .filter((m) => !isThinkingGroupContent(m.content) && m.role !== 'system')
       .map((m) => ({
         role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.role === 'worker' ? withWorkerPrefix(m.workerName, m.content) : m.content,
+        content: stripImages(m.role === 'worker' ? withWorkerPrefix(m.workerName, m.content) : m.content),
       }));
+  };
 
   const enqueue = (params: {
     gid: string;
@@ -204,10 +171,10 @@ export function GroupChatPanel() {
         const result = await chatSend(worker.id, text, undefined, history, msgId, gid);
         const reply = stripDirectiveTagsInContent(result.reply);
         perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
-        useChatStore.getState().updateGroupMessage(gid, placeholderId, reply);
+        useChatStore.getState().updateGroupMessage(gid, placeholderId, reply, Date.now());
         console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel}: ${toPlainText(reply)}`);
       } catch (err) {
-        useChatStore.getState().updateGroupMessage(gid, placeholderId, '(发送失败)');
+        useChatStore.getState().updateGroupMessage(gid, placeholderId, '(发送失败)', Date.now());
         console.error(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel} 失败:`, err);
       }
     });
@@ -352,9 +319,9 @@ export function GroupChatPanel() {
               const reply = stripDirectiveTagsInContent(result.reply);
               perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
               results.set(task.id, toPlainText(reply));
-              useChatStore.getState().updateGroupMessage(gid, pid, reply);
+              useChatStore.getState().updateGroupMessage(gid, pid, reply, Date.now());
             } catch {
-              useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)');
+              useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)', Date.now());
             }
           })
         );
@@ -375,6 +342,7 @@ export function GroupChatPanel() {
     // 协作者模式：CSV + @mention 2+ workers
     if (attachedFile && targets.length >= 2) {
       inputRef.current!.value = '';
+      localStorage.removeItem(`draft:group:${currentGroupId}`);
       addGroupMessage(currentGroupId, {
         id: makeId('u', 'user'),
         role: 'user',
@@ -398,6 +366,7 @@ export function GroupChatPanel() {
     // 协作者模式：无 CSV + @mention 2+ workers
     if (!attachedFile && targets.length >= 2) {
       inputRef.current!.value = '';
+      localStorage.removeItem(`draft:group:${currentGroupId}`);
       addGroupMessage(currentGroupId, {
         id: makeId('u', 'user'),
         role: 'user',
@@ -410,6 +379,7 @@ export function GroupChatPanel() {
     // 单 worker 模式：CSV + @mention 一个 worker，整体发送
     if (attachedFile && targets.length === 1) {
       inputRef.current!.value = '';
+      localStorage.removeItem(`draft:group:${currentGroupId}`);
       const [worker] = targets;
       const gid = currentGroupId;
       const file = attachedFile;
@@ -442,9 +412,9 @@ export function GroupChatPanel() {
         return chatSend(worker.id, prompt, undefined, history, msgId, gid).then((result) => {
           const reply = stripDirectiveTagsInContent(result.reply);
           perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
-          useChatStore.getState().updateGroupMessage(gid, pid, reply);
+          useChatStore.getState().updateGroupMessage(gid, pid, reply, Date.now());
         }).catch(() => {
-          useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)');
+          useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)', Date.now());
         });
       }).catch(console.error);
       return;
@@ -466,6 +436,7 @@ export function GroupChatPanel() {
     }
 
     inputRef.current!.value = '';
+    localStorage.removeItem(`draft:group:${currentGroupId}`);
     setNoTarget(false);
 
     const gid = currentGroupId;
@@ -501,8 +472,13 @@ export function GroupChatPanel() {
 
   const handleClear = () => {
     if (!currentGroupId) return;
-    clearGroupMessages(currentGroupId);
     clearWorkerSessions(groupWorkers.map((w) => w.id), currentGroupId).catch(console.error);
+    addGroupMessage(currentGroupId, {
+      id: makeId('sys', 'clear'),
+      role: 'system',
+      content: '--- Session cleared ---',
+      timestamp: Date.now(),
+    });
   };
 
   const handleAddWorker = async (workerId: string) => {
@@ -545,6 +521,7 @@ export function GroupChatPanel() {
       <div className={styles.header}>
         <span className={styles.title}>Group</span>
         <span className={styles.groupName}>{group.name}</span>
+        <span className={styles.groupId}>{group.id}</span>
         <div className={styles.workerBadges}>
           {groupWorkers.map((w) => (
             <span
@@ -595,10 +572,10 @@ export function GroupChatPanel() {
         </button>
         <button
           className={styles.debugToggle}
-          onClick={() => void openLogsDir()}
-          title="打开日志文件夹（chat-YYYY-MM-DD.log）"
+          onClick={() => setContextDialogOpen(true)}
+          title="编辑 Group 全局上下文（注入每个 Worker）"
         >
-          日志
+          上下文
         </button>
       </div>
 
@@ -611,94 +588,32 @@ export function GroupChatPanel() {
             </div>
           </div>
         )}
-        {messages.map((msg) =>
-          msg.role === 'system' ? (
-            <div key={msg.id} className={styles.systemMsg}>{toPlainText(msg.content)}</div>
-          ) : msg.role === 'debug' ? (
-            debugMode ? (
+        {messages.map((msg) => {
+          if (msg.role === 'system') {
+            return <div key={msg.id} className={styles.systemMsg}>{toPlainText(msg.content)}</div>;
+          }
+          if (msg.role === 'debug') {
+            return debugMode ? (
               <div key={msg.id} className={styles.debugMsg}>
                 <span className={styles.debugMsgLabel}>调试</span>
                 <pre className={styles.debugMsgContent}>{toPlainText(msg.content)}</pre>
               </div>
-            ) : null
-          ) : (
-            <div key={msg.id} className={`${styles.msg} ${styles[msg.role]}`}>
-              <div className={styles.msgLabelRow}>
-                {msg.role === 'user' ? (
-                  <div className={styles.msgLabel}>你</div>
-                ) : (
-                  <div className={styles.msgLabel}>
-                    <span
-                      className={styles.workerLabel}
-                      style={{ color: workerColor(msg.workerId ?? '', workerIds) }}
-                    >
-                      {msg.workerName}
-                    </span>
-                  </div>
-                )}
-                {!!msg.timestamp && (
-                  <span className={styles.msgTime}>{formatMessageTime(msg.timestamp)}</span>
-                )}
-              </div>
-              <div className={`${styles.bubble} ${isThinkingGroupContent(msg.content) ? styles.thinking : ''}`}>
-                {isThinkingGroupContent(msg.content) ? msg.content : (
-                  typeof msg.content === 'string' ? (
-                    <div className={styles.markdown}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={makeCodeComponents(msg.workerId)}>
-                        {normalizeNewlines(msg.content)}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {msg.content.map((block, idx) => {
-                        if (block.type === 'text') {
-                          return (
-                            <div key={`t-${msg.id}-${idx}`} className={styles.markdown}>
-                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={makeCodeComponents(msg.workerId)}>
-                                {normalizeNewlines(block.text)}
-                              </ReactMarkdown>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div key={`i-${msg.id}-${idx}`} className={styles.groupImageRow}>
-                            <img
-                              src={`data:${block.mediaType};base64,${block.data}`}
-                              alt="群聊生成图片"
-                              className={styles.groupImage}
-                              onClick={(e) =>
-                                openImagePreview(
-                                  `data:${block.mediaType};base64,${block.data}`,
-                                  e.currentTarget.naturalWidth,
-                                  e.currentTarget.naturalHeight
-                                )
-                              }
-                            />
-                            <button
-                              type="button"
-                              className={styles.imageDownloadBtn}
-                              onClick={() => void handleSaveImage(msg.msgId, `data:${block.mediaType};base64,${block.data}`)}
-                              title="下载图片"
-                              aria-label="下载图片"
-                            >
-                              <svg viewBox="0 0 20 20" fill="none" className={styles.imageDownloadIcon} aria-hidden="true">
-                                <path d="M10 3v8m0 0l-3-3m3 3l3-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                <path d="M4 13.5v1a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0016 14.5v-1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                              </svg>
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )
-                )}
-                {msg.role === 'worker' && msg.msgId && (
-                  <div className={styles.msgIdTag}>{msg.msgId}</div>
-                )}
-              </div>
-            </div>
-          )
-        )}
+            ) : null;
+          }
+          return (
+            <MessageBubble
+              key={msg.id}
+              role={msg.role === 'worker' ? 'assistant' : 'user'}
+              content={msg.content}
+              msgId={msg.msgId}
+              timestamp={msg.timestamp}
+              completedAt={msg.completedAt}
+              workerName={msg.role === 'worker' ? (msg.workerName ?? msg.workerId) : undefined}
+              workerId={msg.workerId}
+              workerColor={msg.role === 'worker' ? workerColor(msg.workerId ?? '', workerIds) : undefined}
+            />
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 
@@ -742,6 +657,12 @@ export function GroupChatPanel() {
             className={styles.input}
             placeholder={`@${groupWorkers[0]?.name || 'worker'} 你好… (⌘Enter 发送)`}
             onKeyDown={handleKeyDown}
+            onInput={() => {
+              if (!currentGroupId) return;
+              const val = inputRef.current?.value ?? '';
+              if (val) localStorage.setItem(`draft:group:${currentGroupId}`, val);
+              else localStorage.removeItem(`draft:group:${currentGroupId}`);
+            }}
             disabled={pipelineRunning}
           />
           <input
@@ -768,25 +689,14 @@ export function GroupChatPanel() {
           </button>
         </div>
       </div>
-      {previewImage && (
-        <div
-          className={styles.imagePreviewOverlay}
-          onClick={() => setPreviewImage(null)}
-        >
-          <div className={styles.imagePreviewStage} onClick={(e) => e.stopPropagation()}>
-            <img
-              src={previewImage.src}
-              alt="预览图片"
-              className={styles.imagePreviewImage}
-              style={
-                previewImage.width >= previewImage.height
-                  ? { width: 'calc(100vw - 200px)', maxHeight: 'calc(100vh - 100px)' }
-                  : { height: 'calc(100vh - 100px)', maxWidth: 'calc(100vw - 200px)' }
-              }
-            />
-          </div>
-        </div>
-      )}
+      <GroupContextDialog
+        open={contextDialogOpen}
+        groupId={currentGroupId ?? ''}
+        onClose={() => setContextDialogOpen(false)}
+        onSaved={() => {
+          void clearWorkerSessions(groupWorkers.map((w) => w.id), currentGroupId ?? undefined);
+        }}
+      />
     </div>
   );
 }

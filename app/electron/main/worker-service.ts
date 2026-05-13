@@ -596,6 +596,39 @@ export class WorkerService {
     return shell.openPath(dirPath);
   }
 
+  openWorkerDirInCursor(workerId: string): Promise<{ ok: boolean; error?: string }> {
+    const dirPath = this.paths.workerAgentWorkspacePath(workerId);
+    fs.mkdirSync(dirPath, { recursive: true });
+    return new Promise((resolve) => {
+      let settled = false;
+      const augmentedPath = `/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH ?? ''}`;
+      const child = spawn('cursor', [dirPath], {
+        shell: true,
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env, PATH: augmentedPath },
+      });
+      child.unref();
+      child.on('error', (err) => {
+        if (!settled) { settled = true; resolve({ ok: false, error: `无法启动 Cursor: ${err.message}` }); }
+      });
+      child.on('close', (code) => {
+        if (!settled) {
+          settled = true;
+          if (code === 0 || code === null) {
+            resolve({ ok: true });
+          } else {
+            resolve({ ok: false, error: `Cursor 启动失败，请确认已安装 cursor 命令行工具 (exit ${code})` });
+          }
+        }
+      });
+      // fallback: if cursor detaches without closing the wrapper shell
+      setTimeout(() => {
+        if (!settled) { settled = true; resolve({ ok: true }); }
+      }, 3000);
+    });
+  }
+
   openFileLocation(workerId: string, filePath: string): Promise<string> {
     const workspacePath = this.paths.workerAgentWorkspacePath(workerId);
     const targetPath = path.isAbsolute(filePath)

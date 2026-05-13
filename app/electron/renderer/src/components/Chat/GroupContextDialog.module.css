@@ -1,0 +1,124 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 18, 28, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #d8deec;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+  padding: 16px;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a2236;
+  flex: 0 0 auto;
+}
+
+.hint {
+  font-size: 12px;
+  color: #8a93a4;
+}
+
+.loading {
+  font-size: 13px;
+  color: #8a93a4;
+  padding: 12px 0;
+}
+
+.editor {
+  flex: 1;
+  min-height: 320px;
+  resize: vertical;
+  border: 1px solid #cfd7e6;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.6;
+  background: #f9fbff;
+  color: #1a2236;
+  outline: none;
+}
+
+.editor:focus {
+  border-color: #4c76ff;
+  background: #fff;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rightActions {
+  display: flex;
+  gap: 8px;
+}
+
+.clearBtn {
+  border: 1px solid #e2d1d1;
+  background: #fff6f6;
+  color: #b42323;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.clearBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancelBtn {
+  border: 1px solid #d6dce9;
+  background: #fff;
+  color: #36435c;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cancelBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.saveBtn {
+  border: 1px solid #4c76ff;
+  background: #5b8cff;
+  color: #fff;
+  border-radius: 8px;
+  padding: 7px 18px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.saveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clearWorkerSessions } from "../../api/gateway";
 import { useChat } from "../../hooks/useChat";
 import { useChatStore } from "../../store/chatStore";
+import type { ChatMessage } from "../../types";
 import type { ImageInput } from "../../types";
 import styles from "./Composer.module.css";
 
@@ -113,11 +114,18 @@ export function Composer() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachPickerRef = useRef<HTMLInputElement>(null);
   const currentWorkerId = useChatStore((s) => s.currentWorkerId);
-  const clearMessages = useChatStore((s) => s.clearMessages);
+  const pushMessage = useChatStore((s) => s.pushMessage);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [attachError, setAttachError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [inputHeight, setInputHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!currentWorkerId) return;
+    const saved = localStorage.getItem(`draft:worker:${currentWorkerId}`);
+    if (inputRef.current) inputRef.current.value = saved ?? '';
+  }, [currentWorkerId]);
   const [previewImage, setPreviewImage] = useState<{
     src: string;
     width: number;
@@ -167,6 +175,7 @@ export function Composer() {
     )
       return;
     inputRef.current!.value = "";
+    localStorage.removeItem(`draft:worker:${currentWorkerId}`);
     const images = pendingImages.map(({ mediaType, data }) => ({
       mediaType,
       data,
@@ -210,11 +219,28 @@ export function Composer() {
 
   const handleClear = () => {
     if (!currentWorkerId) return;
-    clearMessages(currentWorkerId);
     setPendingImages([]);
     setPendingFiles([]);
     setAttachError("");
     clearWorkerSessions([currentWorkerId]).catch(console.error);
+    pushMessage(currentWorkerId, { role: 'divider', content: 'Session cleared' } as ChatMessage);
+  };
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = inputRef.current?.offsetHeight ?? 68;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const delta = startY - ev.clientY;
+      setInputHeight(Math.max(68, Math.min(600, startHeight + delta)));
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
   };
 
   const hasPreviews = pendingImages.length > 0 || pendingFiles.length > 0;
@@ -369,13 +395,25 @@ export function Composer() {
         </button>
       </div>
 
+      <div
+        className={styles.resizeHandle}
+        onMouseDown={handleResizeMouseDown}
+        title="拖动调整输入框高度"
+      />
       <div className={styles.inputWrap}>
         <textarea
           ref={inputRef}
           className={styles.input}
+          style={inputHeight != null ? { height: inputHeight } : undefined}
           placeholder="输入消息，粘贴/拖拽图片或文件… (⌘Enter 发送)"
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          onInput={() => {
+            if (!currentWorkerId) return;
+            const val = inputRef.current?.value ?? '';
+            if (val) localStorage.setItem(`draft:worker:${currentWorkerId}`, val);
+            else localStorage.removeItem(`draft:worker:${currentWorkerId}`);
+          }}
           disabled={sending}
         />
         <div className={styles.inputSuffix}>

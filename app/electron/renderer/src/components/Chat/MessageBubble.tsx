@@ -1,9 +1,15 @@
-import React from "react";
+import React, { useMemo } from "react";
 import type { ChatMessage } from "../../types";
 import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { saveChatImage, traceMessageChain, workerOpenFileLocation } from "../../api/gateway";
+import {
+  saveChatImage,
+  saveImageFromUrl,
+  traceMessageChain,
+  workerOpenFileLocation,
+  openExternal,
+} from "../../api/gateway";
 
 const FILE_BLOCK_DISPLAY_LINES = 10;
 
@@ -48,9 +54,198 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }
 
+const IMAGE_URL_EXT_RE =
+  /\.(?:png|jpe?g|gif|webp|svg|bmp|avif|tiff?)(?:[?#]|$)/i;
+
+function isImageUrl(url: string): boolean {
+  try {
+    return IMAGE_URL_EXT_RE.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function childrenToText(children: React.ReactNode): string {
+  return React.Children.toArray(children)
+    .map((c) => {
+      if (typeof c === "string") return c;
+      if (React.isValidElement(c))
+        return childrenToText(
+          (c.props as { children?: React.ReactNode }).children,
+        );
+      return "";
+    })
+    .join("");
+}
+
+function InlineImage({
+  src,
+  alt,
+  onPreview,
+  isUser,
+}: {
+  src: string;
+  alt?: string;
+  onPreview: (src: string, w: number, h: number) => void;
+  isUser?: boolean;
+}) {
+  const [errored, setErrored] = React.useState(false);
+
+  const handleSave = React.useCallback(async () => {
+    const result = await saveImageFromUrl(src);
+    if (!result?.ok && !result?.canceled) {
+      window.alert(result?.error || "保存图片失败");
+    }
+  }, [src]);
+
+  if (errored) {
+    return (
+      <a
+        href={src}
+        className={`break-all underline ${isUser ? "text-white" : "text-blue-600"}`}
+        onClick={(e) => {
+          e.preventDefault();
+          void openExternal(src);
+        }}
+      >
+        {alt || src}
+      </a>
+    );
+  }
+  return (
+    <span className="group/img my-2 flex flex-col gap-1">
+      <span className="flex items-start gap-2">
+        <img
+          src={src}
+          alt={alt ?? ""}
+          className="block max-h-60 max-w-[min(360px,85vw)] cursor-zoom-in rounded-lg border border-[#d5dbe8] bg-white/50 object-contain"
+          onClick={(e) =>
+            onPreview(
+              src,
+              e.currentTarget.naturalWidth,
+              e.currentTarget.naturalHeight,
+            )
+          }
+          onError={() => setErrored(true)}
+        />
+        <button
+          type="button"
+          className="pointer-events-none mt-1 inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-dashed border-gray-300 bg-white/95 text-gray-600 opacity-0 transition-opacity group-hover/img:pointer-events-auto group-hover/img:opacity-100 hover:bg-gray-50"
+          onClick={() => void handleSave()}
+          title="下载图片"
+          aria-label="下载图片"
+        >
+          <svg
+            viewBox="0 0 20 20"
+            fill="none"
+            className="h-4 w-4"
+            aria-hidden="true"
+          >
+            <path
+              d="M10 3v8m0 0l-3-3m3 3l3-3"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M4 13.5v1a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0016 14.5v-1"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      </span>
+      <a
+        href={src}
+        className={`break-all text-[11px] underline decoration-dashed underline-offset-2 opacity-70 hover:opacity-100 ${isUser ? "text-white" : "text-blue-500"}`}
+        onClick={(e) => {
+          e.preventDefault();
+          void openExternal(src);
+        }}
+        title={src}
+      >
+        {src}
+      </a>
+    </span>
+  );
+}
+
+function CodeBlock({
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLPreElement> & { children?: React.ReactNode }) {
+  const [copied, setCopied] = React.useState(false);
+  const preRef = React.useRef<HTMLPreElement>(null);
+
+  const handleCopy = () => {
+    const text = preRef.current?.textContent ?? "";
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="group/pre relative">
+      <pre ref={preRef} {...props}>
+        {children}
+      </pre>
+      <button
+        type="button"
+        className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded border border-gray-600 bg-gray-800 text-gray-400 opacity-0 transition-opacity group-hover/pre:opacity-100 hover:bg-gray-700 hover:text-gray-200"
+        onClick={handleCopy}
+        title="复制代码"
+      >
+        {copied ? (
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className="h-3.5 w-3.5"
+            aria-hidden="true"
+          >
+            <path
+              d="M2 8l4 4 8-8"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : (
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className="h-3.5 w-3.5"
+            aria-hidden="true"
+          >
+            <rect
+              x="5"
+              y="5"
+              width="8"
+              height="8"
+              rx="1.2"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+            <path
+              d="M3 10V4a1 1 0 011-1h6"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        )}
+      </button>
+    </div>
+  );
+}
+
 interface MessageBubbleProps extends ChatMessage {
   workerName?: string;
   workerId?: string;
+  workerColor?: string;
 }
 
 export function MessageBubble({
@@ -60,6 +255,7 @@ export function MessageBubble({
   completedAt,
   workerName,
   workerId,
+  workerColor,
   msgId,
 }: MessageBubbleProps) {
   const isUser = role === "user";
@@ -72,20 +268,26 @@ export function MessageBubble({
     height: number;
   } | null>(null);
 
-  const openImagePreview = React.useCallback((src: string, width: number, height: number) => {
-    setPreviewImage({ src, width, height });
-  }, []);
+  const openImagePreview = React.useCallback(
+    (src: string, width: number, height: number) => {
+      setPreviewImage({ src, width, height });
+    },
+    [],
+  );
 
   const closeImagePreview = React.useCallback(() => {
     setPreviewImage(null);
   }, []);
 
-  const handleSaveImage = React.useCallback(async (src: string) => {
-    const result = await saveChatImage(msgId || "image", src);
-    if (!result?.ok && !result?.canceled) {
-      window.alert(result?.error || "保存图片失败");
-    }
-  }, [msgId]);
+  const handleSaveImage = React.useCallback(
+    async (src: string) => {
+      const result = await saveChatImage(msgId || "image", src);
+      if (!result?.ok && !result?.canceled) {
+        window.alert(result?.error || "保存图片失败");
+      }
+    },
+    [msgId],
+  );
 
   const handleMsgIdClick = React.useCallback(async () => {
     if (!msgId) return;
@@ -100,13 +302,45 @@ export function MessageBubble({
       }
       setTraceOutput((result?.output || "").trim() || "(无输出)");
     } catch (err) {
-      setTraceOutput(`查询失败: ${err instanceof Error ? err.message : String(err)}`);
+      setTraceOutput(
+        `查询失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setIsTraceLoading(false);
     }
   }, [msgId]);
 
-  const codeComponents = {
+  const markdownComponents = {
+    pre: CodeBlock,
+    img({ src, alt }: React.ImgHTMLAttributes<HTMLImageElement>) {
+      if (!src) return null;
+      return <InlineImage src={src} alt={alt} onPreview={openImagePreview} isUser={isUser} />;
+    },
+    a({
+      href,
+      children,
+      ...props
+    }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+      if (href && isImageUrl(href) && childrenToText(children) === href) {
+        return <InlineImage src={href} onPreview={openImagePreview} isUser={isUser} />;
+      }
+      if (href) {
+        return (
+          <a
+            {...props}
+            href={href}
+            className={isUser ? "text-white underline" : undefined}
+            onClick={(e) => {
+              e.preventDefault();
+              void openExternal(href);
+            }}
+          >
+            {children}
+          </a>
+        );
+      }
+      return <a {...props} className={isUser ? "text-white underline" : undefined}>{children}</a>;
+    },
     code({
       children,
       className,
@@ -121,7 +355,9 @@ export function MessageBubble({
             onClick={() => void workerOpenFileLocation(workerId, text)}
             title={`定位文件: ${text}`}
           >
-            <code className="font-mono text-[0.9em] underline decoration-dashed underline-offset-2">{children}</code>
+            <code className="font-mono text-[0.9em] underline decoration-dashed underline-offset-2">
+              {children}
+            </code>
             <span className="select-none text-[11px] leading-none">📂</span>
           </span>
         );
@@ -140,11 +376,14 @@ export function MessageBubble({
     return lines.map((line, idx) => {
       const trimmed = line.trimStart();
       const isHighlightedLine =
-        trimmed.startsWith("real usage (normalized):") ||
-        trimmed.startsWith("estimated tokens (chars/4):");
+        trimmed.startsWith("prompt_tokens(") ||
+        trimmed.startsWith("estimated tokens (chars/2.7):");
+
+      const renderClass = isHighlightedLine ? "font-bold text-red-600" : undefined;
+
       return (
         <React.Fragment key={`trace-line-${idx}`}>
-          <span className={isHighlightedLine ? "font-bold text-red-600" : undefined}>{line}</span>
+          <span className={renderClass}>{line}</span>
           {idx < lines.length - 1 ? "\n" : null}
         </React.Fragment>
       );
@@ -157,7 +396,7 @@ export function MessageBubble({
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeHighlight]}
-          components={codeComponents}
+          components={markdownComponents}
         >
           {normalizeNewlines(text)}
         </ReactMarkdown>
@@ -171,12 +410,15 @@ export function MessageBubble({
   const isThinking =
     typeof content === "string" &&
     (content === "思考中…" || content === "思考中...");
-  const completedTimeStr = completedAt && !isThinking ? formatDateTime(completedAt) : "";
+  const completedTimeStr =
+    completedAt && !isThinking ? formatDateTime(completedAt) : "";
 
   return (
-    <div className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+    <div
+      className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}
+    >
       <div className="mb-1 flex items-center gap-1.5 text-[11px] opacity-50">
-        <span>{displayName}</span>
+        <span style={workerColor ? { color: workerColor, fontWeight: 500 } : undefined}>{displayName}</span>
         {timeStr && <span className="text-[10px]">{timeStr}</span>}
       </div>
       {typeof content === "string" ? (
@@ -211,7 +453,10 @@ export function MessageBubble({
               );
             }
             return (
-              <div key={`i-${idx}`} className="group flex items-start justify-end gap-2">
+              <div
+                key={`i-${idx}`}
+                className="group flex items-start justify-end gap-2"
+              >
                 <img
                   className="max-h-60 max-w-[min(320px,85vw)] cursor-zoom-in rounded-[10px] border border-[#d5dbe8] bg-white object-contain"
                   src={`data:${block.mediaType};base64,${block.data}`}
@@ -220,20 +465,40 @@ export function MessageBubble({
                     openImagePreview(
                       `data:${block.mediaType};base64,${block.data}`,
                       e.currentTarget.naturalWidth,
-                      e.currentTarget.naturalHeight
+                      e.currentTarget.naturalHeight,
                     )
                   }
                 />
                 <button
                   type="button"
                   className="pointer-events-none mt-1 inline-flex h-7 w-7 items-center justify-center rounded border border-dashed border-gray-300 bg-white/95 text-gray-600 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-gray-50"
-                  onClick={() => void handleSaveImage(`data:${block.mediaType};base64,${block.data}`)}
+                  onClick={() =>
+                    void handleSaveImage(
+                      `data:${block.mediaType};base64,${block.data}`,
+                    )
+                  }
                   title="下载图片"
                   aria-label="下载图片"
                 >
-                  <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
-                    <path d="M10 3v8m0 0l-3-3m3 3l3-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M4 13.5v1a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0016 14.5v-1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M10 3v8m0 0l-3-3m3 3l3-3"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M4 13.5v1a1.5 1.5 0 001.5 1.5h9A1.5 1.5 0 0016 14.5v-1"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
                   </svg>
                 </button>
               </div>
@@ -266,13 +531,13 @@ export function MessageBubble({
               style={
                 previewImage.width >= previewImage.height
                   ? {
-                    width: "calc(100vw - 200px)",
-                    maxHeight: "calc(100vh - 100px)",
-                  }
+                      width: "calc(100vw - 200px)",
+                      maxHeight: "calc(100vh - 100px)",
+                    }
                   : {
-                    height: "calc(100vh - 100px)",
-                    maxWidth: "calc(100vw - 200px)",
-                  }
+                      height: "calc(100vh - 100px)",
+                      maxWidth: "calc(100vw - 200px)",
+                    }
               }
             />
           </div>

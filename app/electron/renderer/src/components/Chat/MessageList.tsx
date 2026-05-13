@@ -53,30 +53,20 @@ export function MessageList() {
     <div className={styles.list}>
       {normalMessages.map((msg, i) => (
         <div key={`m-${i}`}>
-          {/* {progressMessages.length > 0 && i === anchorIndex && (
-            <div className={styles.progressPanel}>
-              <div className={styles.progressHeader}>
-                <div className={styles.progressTitle}>执行回传（{progressMessages.length}）</div>
-                <button
-                  type="button"
-                  className={styles.progressToggle}
-                  onClick={() => setProgressCollapsed((v) => !v)}
-                >
-                  {progressCollapsed ? '展开' : '收起'}
-                </button>
-              </div>
-              {progressDisplay.map((pmsg, pIndex) => (
-                <div key={`p-${pIndex}`} className={styles.progressItem}>
-                  {typeof pmsg.content === 'string' ? pmsg.content : ''}
-                </div>
-              ))}
+          {msg.role === 'divider' ? (
+            <div className={styles.sessionDivider}>
+              <span className={styles.sessionDividerLine} />
+              <span className={styles.sessionDividerLabel}>Session cleared</span>
+              <span className={styles.sessionDividerLine} />
             </div>
-          )} */}
-          <MessageBubble
-            {...msg}
-            workerName={workerName}
-            workerId={currentWorkerId}
-          />
+          ) : null}
+          {msg.role !== 'divider' && (
+            <MessageBubble
+              {...msg}
+              workerName={workerName}
+              workerId={currentWorkerId}
+            />
+          )}
         </div>
       ))}
       <div ref={bottomRef} />

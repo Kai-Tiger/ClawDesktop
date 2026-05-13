@@ -1,4 +1,4 @@
-export type Role = 'user' | 'assistant';
+export type Role = 'user' | 'assistant' | 'divider';
 
 export interface ImageInput {
   mediaType: string;
@@ -129,6 +129,7 @@ export interface GroupMessage {
   workerName?: string;
   content: MessageContent;
   timestamp?: number;
+  completedAt?: number;
 }
 
 export interface CoordinatorTask {

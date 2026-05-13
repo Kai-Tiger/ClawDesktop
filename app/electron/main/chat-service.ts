@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { BrowserWindow, app, dialog, nativeImage } from 'electron';
+import { BrowserWindow, app, dialog, nativeImage, net } from 'electron';
 import type { ChatResult, ImageInput, MessageContent, MessageContentBlock, MessageItem } from './types';
 import type { OpenClawPaths } from './paths';
 import type { GatewayService } from './gateway-service';
@@ -166,6 +166,95 @@ export class ChatService {
     } catch {
       return null;
     }
+  }
+
+  private loadGroupMemoryContext(groupId: string): string | null {
+    const memDir = this.paths.groupMemoryDir(groupId);
+    const sharedDir = this.paths.groupSharedDir(groupId);
+    const parts: string[] = [];
+    if (fs.existsSync(memDir)) {
+      try {
+        const files = fs.readdirSync(memDir).filter((f) => f.endsWith('.md')).sort();
+        for (const f of files) {
+          const content = fs.readFileSync(path.join(memDir, f), 'utf8').trim();
+          if (content) parts.push(`--- ${f} ---\n${content}`);
+        }
+      } catch { /* ignore */ }
+    }
+    const memSection = parts.length > 0 ? `[Group Shared Memory]\n${parts.join('\n\n')}` : '';
+    const sharedSection = `[Group Shared Directory]\n共享文件目录: ${sharedDir}\n该目录中的文件对 group 内所有 worker 可读写，使用文件工具时请使用上述绝对路径。`;
+    const combined = [memSection, sharedSection].filter(Boolean).join('\n\n');
+    return combined || null;
+  }
+
+  private stripImageData(content: MessageContent): unknown {
+    if (typeof content === 'string') return content;
+    return content.map((blk) => {
+      if (blk.type === 'text') return { type: 'text', text: blk.text };
+      return { type: 'image', _placeholder: true, mediaType: blk.mediaType, byteSize: blk.data.length };
+    });
+  }
+
+  private buildHttpSessionJsonlRows(params: {
+    history: MessageItem[];
+    message: string;
+    images: ImageInput[];
+    assistantContent: MessageContent;
+    responseJson: unknown;
+    traceId: string;
+  }): string[] {
+    const now = new Date().toISOString();
+    const rows: string[] = [];
+
+    for (let i = 0; i < params.history.length; i++) {
+      const item = params.history[i];
+      rows.push(JSON.stringify({
+        type: 'message',
+        message: { role: item.role, content: this.stripImageData(item.content) },
+        timestamp: now,
+        id: `http-hist-${i}`,
+      }));
+    }
+
+    const userContent: MessageContent = params.images.length === 0
+      ? params.message
+      : [
+          { type: 'text' as const, text: params.message || '' },
+          ...params.images.map((img) => ({ type: 'image' as const, mediaType: img.mediaType, data: img.data })),
+        ];
+    const userIdx = params.history.length;
+    rows.push(JSON.stringify({
+      type: 'message',
+      message: { role: 'user', content: this.stripImageData(userContent) },
+      timestamp: now,
+      id: `http-msg-${userIdx}`,
+    }));
+
+    rows.push(JSON.stringify({
+      type: 'message',
+      message: { role: 'assistant', content: this.stripImageData(params.assistantContent) },
+      timestamp: now,
+      id: `http-msg-${userIdx + 1}`,
+      parentId: `http-msg-${userIdx}`,
+    }));
+
+    const root = params.responseJson && typeof params.responseJson === 'object'
+      ? (params.responseJson as Record<string, unknown>)
+      : {};
+    rows.push(JSON.stringify({
+      type: 'custom',
+      customType: 'http-run-complete',
+      data: {
+        runId: typeof root.id === 'string' ? root.id : null,
+        traceId: params.traceId,
+        sessionId: params.traceId,
+        usage: root.usage ?? null,
+      },
+      timestamp: now,
+      id: `http-custom-0`,
+    }));
+
+    return rows;
   }
 
   private normalizeReplyBlocks(blocks: MessageContentBlock[]): MessageContent {
@@ -600,7 +689,8 @@ export class ChatService {
     images: ImageInput[],
     history: MessageItem[],
     onLog?: (step: string) => void,
-    traceId?: string
+    traceId?: string,
+    groupId?: string
   ): Promise<MessageContent> {
     const userContent: MessageContent = images.length === 0
       ? message
@@ -609,7 +699,9 @@ export class ChatService {
           ...images.map((img) => ({ type: 'image' as const, mediaType: img.mediaType, data: img.data })),
         ];
 
+    const groupCtx = groupId ? this.loadGroupMemoryContext(groupId) : null;
     const messages = [
+      ...(groupCtx ? [{ role: 'system', content: groupCtx }] : []),
       ...history.map((item) => ({ role: item.role, content: this.toOpenAIContent(item.content) })),
       { role: 'user', content: this.toOpenAIContent(userContent) },
     ];
@@ -630,6 +722,10 @@ export class ChatService {
       const content = await this.extractReplyContent(json);
       const text = this.summarizeMessageContent(content) || '(无回复内容)';
       onLog?.(`reply len=${text.length}`);
+      if (traceId) {
+        const sessionRows = this.buildHttpSessionJsonlRows({ history, message, images, assistantContent: content || '(无回复内容)', responseJson: json, traceId });
+        this.paths.writeHttpSessionJsonl(traceId, sessionRows);
+      }
       return content || '(无回复内容)';
     }
 
@@ -663,6 +759,12 @@ export class ChatService {
     }
     if (traceId) {
       headers['x-openclaw-trace-id'] = traceId;
+    }
+    const workerIdFromModel = gatewayModel.startsWith('openclaw/') ? gatewayModel.slice('openclaw/'.length) : null;
+    if (workerIdFromModel) {
+      const epoch = groupId ? this.sessions.getGroupSessionEpoch(workerIdFromModel, groupId) : 0;
+      const sessionSuffix = groupId ? `g${groupId.slice(-8)}-e${epoch}` : `main`;
+      headers['x-openclaw-session-key'] = `agent:${workerIdFromModel}:${sessionSuffix}`;
     }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.paths.httpTimeoutMs);
@@ -708,6 +810,16 @@ export class ChatService {
     const content = await this.extractReplyContent(json);
     const text = this.summarizeMessageContent(content) || '(无回复内容)';
     onLog?.(`reply len=${text.length}`);
+    if (traceId) {
+      const sessionRows = this.buildHttpSessionJsonlRows({ history, message, images, assistantContent: content || '(无回复内容)', responseJson: json, traceId });
+      this.paths.writeHttpSessionJsonl(traceId, sessionRows);
+    }
+    if (workerIdFromModel) {
+      const epoch = groupId ? this.sessions.getGroupSessionEpoch(workerIdFromModel, groupId) : 0;
+      const sessionSuffix = groupId ? `g${groupId.slice(-8)}-e${epoch}` : 'main';
+      const sessionKey = `agent:${workerIdFromModel}:${sessionSuffix}`;
+      setImmediate(() => this.sessions.compactAgentSession(workerIdFromModel!, sessionKey));
+    }
     return content || '(无回复内容)';
   }
 
@@ -769,10 +881,7 @@ export class ChatService {
             .replace(/\s+/g, ' ')
             .trim();
         }
-        const progressHint = /(开始|执行|处理中|进度|完成|导出|第\d+条|batch|step|progress|running)/i;
-        const noisyHint = /(\*\*Prompt\s*\d+|Prompt\s*\d+|Subject:|Dear\s|```|rawChars|schemaChars|propertiesCount|injectedChars|finalPromptText|finalAssistantRawText)/i;
-        if (!progressHint.test(compact) || noisyHint.test(compact)) return;
-        if (compact.length > 180 && !/(进度|完成|导出|第\d+条|开始执行|批量)/i.test(compact)) return;
+        if (!compact) return;
         const now = Date.now();
         const prev = this.wsProgressDedupe.get(agentId);
         if (prev && prev.text === compact && now - prev.ts < 4000) return;
@@ -783,7 +892,7 @@ export class ChatService {
       };
       const handleLine = (line: string) => {
         const clean = stripAnsi(line).trim();
-        if (!clean || clean.startsWith('{') || /^[\[\]{}],?$/.test(clean) || NOISE.test(clean)) return;
+        if (!clean || clean.startsWith('{') || /^[\[\]{}],?$/.test(clean)) return;
         onLog?.(`[${ms()}] status: ${clean}`);
         emitProgress(clean);
       };
@@ -973,7 +1082,8 @@ export class ChatService {
           images ?? [],
           history ?? [],
           (step) => log(`HTTP ${step}`),
-          traceId
+          traceId,
+          groupId
         );
         const replyText = this.summarizeMessageContent(reply) || '(无回复内容)';
         log(`DONE reply-len=${replyText.length} total=${Date.now() - t0}ms`);
@@ -1012,7 +1122,8 @@ export class ChatService {
           images ?? [],
           history ?? [],
           (step) => log(`HTTP ${step}`),
-          traceId
+          traceId,
+          groupId
         );
         const replyText = this.summarizeMessageContent(reply) || '(无回复内容)';
         log(`DONE reply-len=${replyText.length} total=${Date.now() - t0}ms`);
@@ -1111,6 +1222,45 @@ export class ChatService {
       }),
       'utf8'
     );
+  }
+
+  async saveImageFromUrl(url: string): Promise<{ ok: boolean; canceled?: boolean; savedPath?: string; error?: string }> {
+    try {
+      const resp = await net.fetch(url);
+      if (!resp.ok) return { ok: false, error: `下载失败: ${resp.status} ${resp.statusText}` };
+      const buffer = Buffer.from(await resp.arrayBuffer());
+
+      const contentType = resp.headers.get('content-type') || '';
+      let ext = 'png';
+      if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = 'jpg';
+      else if (contentType.includes('gif')) ext = 'gif';
+      else if (contentType.includes('webp')) ext = 'webp';
+      else if (contentType.includes('svg')) ext = 'svg';
+      else if (contentType.includes('bmp')) ext = 'bmp';
+      const urlExt = url.split('/').pop()?.split('?')[0]?.split('.').pop()?.toLowerCase();
+      if (urlExt && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(urlExt)) {
+        ext = urlExt === 'jpeg' ? 'jpg' : urlExt;
+      }
+
+      const rawName = url.split('/').pop()?.split('?')[0] || `image.${ext}`;
+      const baseName = rawName.replace(/[\\/:*?"<>|]/g, '_');
+      const defaultPath = path.join(app.getPath('documents'), baseName);
+
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) return { ok: false, error: '主窗口不可用' };
+
+      const saveResult = await dialog.showSaveDialog(win, {
+        title: '保存图片',
+        defaultPath,
+        filters: [{ name: 'Image', extensions: [ext, 'png', 'jpg', 'webp'] }],
+      });
+      if (saveResult.canceled || !saveResult.filePath) return { ok: false, canceled: true };
+
+      fs.writeFileSync(saveResult.filePath, buffer);
+      return { ok: true, savedPath: saveResult.filePath };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   async saveImage(msgId: string, dataUrl: string): Promise<{ ok: boolean; canceled?: boolean; savedPath?: string; error?: string }> {

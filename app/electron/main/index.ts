@@ -10,17 +10,20 @@ import { TelegramService } from './telegram-service';
 import { ConfigService } from './config-service';
 import { ChatService } from './chat-service';
 import { CoordinatorService } from './coordinator-service';
+import { MobileBridgeService } from './mobile-bridge-service';
 import { registerIpcHandlers } from './ipc-handlers';
 
 const paths = new OpenClawPaths();
 const sessions = new SessionService(paths);
-const groups = new GroupService();
+const groups = new GroupService(paths);
 const workers = new WorkerService(paths, sessions);
 const gateway = new GatewayService(paths, () => workers.listWorkers());
 const telegram = new TelegramService(paths, workers);
 const config = new ConfigService(paths, sessions, gateway);
 const chat = new ChatService(paths, gateway, sessions, workers, (workerId) => config.getWorkerConfiguredModelFull(workerId), () => config.getModel());
 const coordinator = new CoordinatorService(paths, config);
+const mobileBridge = new MobileBridgeService(workers, chat, groups, coordinator, paths);
+gateway.addWorkerEventListener((event) => mobileBridge.broadcast(event));
 
 async function bootstrap() {
   const stateDir = path.join(paths.userRuntimeRoot, 'state');
@@ -110,7 +113,7 @@ function createWindow() {
   }
 }
 
-app.on('before-quit', () => { gateway.stopGatewayWsClient(); gateway.stopGateway(); });
+app.on('before-quit', () => { gateway.stopGatewayWsClient(); gateway.stopGateway(); mobileBridge.stop(); });
 
 app.whenReady().then(async () => {
   try {
@@ -121,10 +124,11 @@ app.whenReady().then(async () => {
   gateway.startGateway()
     .then(() => { setTimeout(() => gateway.startGatewayWsClient(), 3000); })
     .catch((err) => console.error('[auto-start gateway failed]', err));
+  mobileBridge.start().catch((err) => console.error('[mobile-bridge start failed]', err));
   createWindow();
 
   registerIpcHandlers({
-    gateway, config, workers, chat, telegram, groups, sessions, coordinator,
+    gateway, config, workers, chat, telegram, groups, sessions, coordinator, mobileBridge,
     mainWindowRef: { current: mainWindow },
   });
 });

@@ -88,3 +88,22 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.sidebarToggleBtn {
+  border: 1px solid #d7deee;
+  background: #f7f9ff;
+  color: #3f5bbf;
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebarToggleBtn:hover {
+  background: #eef2ff;
+  border-color: #b0bdf0;
+}

@@ -12,6 +12,7 @@ export function App() {
   const { reload: reloadWorkers } = useWorkers();
   const { reload: reloadGroups } = useGroups();
   const currentView = useChatStore((s) => s.currentView);
+  const sidebarVisible = useChatStore((s) => s.sidebarVisible);
 
   useEffect(() => {
     const off = onCronMessage(({ workerId, content, role }) => {
@@ -22,7 +23,7 @@ export function App() {
   }, []);
 
   return (
-    <div className={styles.layout}>
+    <div className={`${styles.layout} ${sidebarVisible ? '' : styles.sidebarHidden}`}>
       <Sidebar onWorkersChange={reloadWorkers} onGroupsChange={reloadGroups} />
       {currentView === 'group' ? <GroupChatPanel /> : <ChatPanel />}
     </div>

@@ -8,6 +8,7 @@ import type { TelegramService } from './telegram-service';
 import type { GroupService } from './group-service';
 import type { SessionService } from './session-service';
 import type { CoordinatorService } from './coordinator-service';
+import type { MobileBridgeService } from './mobile-bridge-service';
 import type { ImageInput, MessageItem } from './types';
 
 export function registerIpcHandlers(opts: {
@@ -19,9 +20,10 @@ export function registerIpcHandlers(opts: {
   groups: GroupService;
   sessions: SessionService;
   coordinator: CoordinatorService;
+  mobileBridge: MobileBridgeService;
   mainWindowRef: { current: BrowserWindow | null };
 }) {
-  const { gateway, config, workers, chat, telegram, groups, sessions, coordinator, mainWindowRef } = opts;
+  const { gateway, config, workers, chat, telegram, groups, sessions, coordinator, mobileBridge, mainWindowRef } = opts;
 
   ipcMain.handle('gateway:status', async () => gateway.statusJson());
   ipcMain.handle('gateway:start', async () => gateway.startGateway());
@@ -33,7 +35,11 @@ export function registerIpcHandlers(opts: {
   ipcMain.handle('settings:setModel', async (_evt, model: string) => config.setModel(model));
   ipcMain.handle('settings:getWorkerModel', (_evt, workerId: string) => config.getWorkerModel(workerId));
   ipcMain.handle('settings:setWorkerModel', async (_evt, workerId: string, model: string) => config.setWorkerModel(workerId, model));
-  ipcMain.handle('settings:applyWorkerImagePreset', async (_evt, workerId: string) => config.applyWorkerImagePreset(workerId));
+  ipcMain.handle('settings:getWorkerTools', (_evt, workerId: string) => config.getWorkerTools(workerId));
+  ipcMain.handle('settings:setWorkerToolEnabled', async (_evt, workerId: string, toolId: string, enabled: boolean) =>
+    config.setWorkerToolEnabled(workerId, toolId, enabled)
+  );
+  ipcMain.handle('settings:applyWorkerImagePreset', async (_evt, workerId: string, model?: string) => config.applyWorkerImagePreset(workerId, model));
   ipcMain.handle('workers:list', async () => workers.listWorkers());
   ipcMain.handle('channels:telegram:list', async () => telegram.listTelegramChannels());
   ipcMain.handle('channels:telegram:add', async (_evt, token: string, workerId?: string) => telegram.addTelegramChannel(token, workerId));
@@ -45,6 +51,9 @@ export function registerIpcHandlers(opts: {
   ipcMain.on('chat:saveHistory', (_evt, data) => chat.saveChatHistory(data));
   ipcMain.handle('chat:saveImage', (_evt, payload: { msgId?: string; dataUrl?: string }) => {
     return chat.saveImage(payload?.msgId || '', payload?.dataUrl || '');
+  });
+  ipcMain.handle('chat:saveImageFromUrl', (_evt, url: string) => {
+    return chat.saveImageFromUrl(url);
   });
   ipcMain.handle('workers:open-file-dialog', () => workers.openFileDialog());
   ipcMain.handle('workers:open-skill-dir-dialog', () => workers.openSkillDirDialog());
@@ -91,6 +100,17 @@ export function registerIpcHandlers(opts: {
   ipcMain.handle('workers:open-openclaw-dir', () => workers.openOpenClawDir());
   ipcMain.handle('workers:open-worker-dir', (_evt, workerId: string) => workers.openWorkerDir(workerId));
   ipcMain.handle('workers:open-file-location', (_evt, workerId: string, filePath: string) => workers.openFileLocation(workerId, filePath));
+  ipcMain.handle('workers:open-in-cursor', (_evt, workerId: string) => workers.openWorkerDirInCursor(workerId));
   ipcMain.handle('chat:trace-message-chain', (_evt, messageId: string) => workers.traceMessageChain(messageId));
   ipcMain.handle('workers:update-meta', (_evt, workerId: string, name: string, description: string) => workers.updateWorkerMeta(workerId, name, description));
+
+  ipcMain.handle('mobile:connectionInfo', () => mobileBridge.connectionInfo());
+  ipcMain.handle('shell:openExternal', (_evt, url: string) => { shell.openExternal(url); });
+  ipcMain.handle('mobile:start', async () => mobileBridge.start());
+  ipcMain.handle('mobile:stop', () => mobileBridge.stop());
+
+  ipcMain.handle('group:memory:list', (_evt, groupId: string) => groups.listGroupMemory(groupId));
+  ipcMain.handle('group:memory:read', (_evt, groupId: string, filename: string) => groups.readGroupMemory(groupId, filename));
+  ipcMain.handle('group:memory:write', (_evt, groupId: string, filename: string, content: string) => groups.writeGroupMemory(groupId, filename, content));
+  ipcMain.handle('group:memory:delete', (_evt, groupId: string, filename: string) => groups.deleteGroupMemory(groupId, filename));
 }

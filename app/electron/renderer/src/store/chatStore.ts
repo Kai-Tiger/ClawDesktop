@@ -16,6 +16,7 @@ interface ChatStore {
   groupMessages: Record<string, GroupMessage[]>;
 
   currentView: 'worker' | 'group';
+  sidebarVisible: boolean;
 
   setWorkers: (workers: WorkerMeta[]) => void;
   selectWorker: (id: string) => void;
@@ -29,8 +30,9 @@ interface ChatStore {
   setGroups: (groups: GroupChannel[]) => void;
   selectGroup: (id: string) => void;
   addGroupMessage: (groupId: string, msg: GroupMessage) => void;
-  updateGroupMessage: (groupId: string, msgId: string, content: MessageContent) => void;
+  updateGroupMessage: (groupId: string, msgId: string, content: MessageContent, completedAt?: number) => void;
   clearGroupMessages: (groupId: string) => void;
+  toggleSidebar: () => void;
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -44,6 +46,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   groupMessages: {},
 
   currentView: 'worker',
+  sidebarVisible: true,
 
   setWorkers: (workers) =>
     set((state) => {
@@ -118,16 +121,18 @@ export const useChatStore = create<ChatStore>((set) => ({
       },
     })),
 
-  updateGroupMessage: (groupId, msgId, content) =>
+  updateGroupMessage: (groupId, msgId, content, completedAt) =>
     set((state) => {
       const list = [...(state.groupMessages[groupId] ?? [])];
       const idx = list.findIndex((m) => m.id === msgId);
-      if (idx >= 0) list[idx] = { ...list[idx], content };
+      if (idx >= 0) list[idx] = { ...list[idx], content, ...(completedAt !== undefined ? { completedAt } : {}) };
       return { groupMessages: { ...state.groupMessages, [groupId]: list } };
     }),
 
   clearGroupMessages: (groupId) =>
     set((state) => ({ groupMessages: { ...state.groupMessages, [groupId]: [] } })),
+
+  toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
 }));
 
 let _saveTimer: ReturnType<typeof setTimeout> | null = null;

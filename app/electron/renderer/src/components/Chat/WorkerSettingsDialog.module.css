@@ -11,7 +11,8 @@
 .dialog {
   width: min(640px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: #fff;
   border-radius: 14px;
   border: 1px solid #d8deec;
@@ -167,4 +168,127 @@
   color: #3b5fd1;
   font-family: monospace;
   word-break: break-all;
+}
+
+.toolList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.toolRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  background: #f5f7fb;
+  border-radius: 8px;
+  border: 1px solid #e6ebf5;
+  min-width: 0;
+}
+
+.toolName {
+  font-size: 12px;
+  color: #36435c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  word-break: break-all;
+  min-width: 0;
+}
+
+.toolMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.infoIcon {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #9bb0da;
+  color: #3f63b8;
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+  background: #eef4ff;
+  cursor: help;
+  position: relative;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: min(240px, calc(100vw - 88px));
+  background: #172035;
+  color: #f3f6ff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 2px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 5;
+}
+
+.infoIcon:hover .tooltip,
+.infoIcon:focus .tooltip,
+.infoIcon:focus-within .tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.switchWrap {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.switchInput {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.switchSlider {
+  position: absolute;
+  inset: 0;
+  background: #c8d1e4;
+  border-radius: 999px;
+  transition: background 0.18s ease;
+}
+
+.switchSlider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.18s ease;
+}
+
+.switchInput:checked + .switchSlider {
+  background: #4d7cff;
+}
+
+.switchInput:checked + .switchSlider::before {
+  transform: translateX(16px);
+}
+
+.switchInput:disabled + .switchSlider {
+  opacity: 0.6;
 }

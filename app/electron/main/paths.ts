@@ -151,6 +151,24 @@ export class OpenClawPaths {
     }
   }
 
+  groupMemoryDir(groupId: string): string {
+    return path.join(this.userOpenClawHome, '.openclaw', `group-${groupId}`, 'memory');
+  }
+
+  groupSharedDir(groupId: string): string {
+    return path.join(this.userOpenClawHome, '.openclaw', `group-${groupId}`, 'shared');
+  }
+
+  writeHttpSessionJsonl(traceId: string, rows: string[]): void {
+    const dir = path.join(this.userRuntimeRoot, 'logs', 'http-sessions');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${traceId}.jsonl`), `${rows.join('\n')}\n`, 'utf8');
+    } catch (err) {
+      this.writeChatLog(`[http-session-jsonl] write failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   runOpenClaw(args: string[], opts?: { cwd?: string; homeOverride?: string; profileOverride?: string; timeoutMs?: number }): Promise<ExecResult> {
     return new Promise((resolve) => {
       const home = opts?.homeOverride || this.userOpenClawHome;

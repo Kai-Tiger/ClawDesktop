@@ -4,6 +4,7 @@ import { GroupSection } from "./GroupSection";
 import { OpenRouterForm } from "./OpenRouterForm";
 import { ModelSelector } from "./ModelSelector";
 import { GatewayControls } from "./GatewayControls";
+import { MobilePanel } from "./MobilePanel";
 import {
   toggleDevTools,
   openDashboard,
@@ -55,6 +56,11 @@ export function Sidebar({ onWorkersChange, onGroupsChange }: Props) {
       <section className={styles.section}>
         <h3 className={styles.heading}>Gateway</h3>
         <GatewayControls />
+      </section>
+
+      <section className={styles.section}>
+        <h3 className={styles.heading}>Mobile</h3>
+        <MobilePanel />
       </section>
 
       <div className={styles.debugBar}>

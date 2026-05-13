@@ -7,3 +7,13 @@
   color: #111;
   background: #fff;
 }
+
+.sidebarHidden {
+  grid-template-columns: 0 1fr;
+}
+
+.sidebarHidden > :first-child {
+  overflow: hidden;
+  width: 0;
+  min-width: 0;
+}

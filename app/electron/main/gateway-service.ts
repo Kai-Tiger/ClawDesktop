@@ -11,11 +11,16 @@ export class GatewayService {
   private wsClient: WsInstance | null = null;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly wsProgressDedupe = new Map<string, { text: string; ts: number }>();
+  private readonly workerEventListeners: Array<(event: { workerId: string; content: string; role: string }) => void> = [];
 
   constructor(
     private readonly paths: OpenClawPaths,
     private readonly listWorkers: () => WorkerMeta[]
   ) {}
+
+  addWorkerEventListener(cb: (event: { workerId: string; content: string; role: string }) => void) {
+    this.workerEventListeners.push(cb);
+  }
 
   get gatewayPort() {
     return this.paths.gatewayPort;
@@ -272,6 +277,31 @@ export class GatewayService {
       return { text: parts.join('\n').trim(), hasToolCall };
     };
 
+    const extractToolOutput = (msg: unknown): string => {
+      if (!msg || typeof msg !== 'object') return '';
+      const root = msg as Record<string, unknown>;
+      if (root.type !== 'message') return '';
+      const payload = root.message as Record<string, unknown> | undefined;
+      if (!payload || (payload.role !== 'toolResult' && payload.role !== 'tool')) return '';
+      const toolName = typeof payload.toolName === 'string' ? payload.toolName : '';
+      if (toolName === 'read' || toolName === 'write' || toolName === 'readFile' || toolName === 'writeFile') return '';
+      const content = payload.content;
+      if (typeof content === 'string') return content.trim();
+      if (Array.isArray(content)) {
+        return (content as unknown[])
+          .map((item) => {
+            if (!item || typeof item !== 'object') return '';
+            const block = item as Record<string, unknown>;
+            if (block.type === 'text' && typeof block.text === 'string') return block.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+      }
+      return '';
+    };
+
     ws.on('message', (data: unknown) => {
       let parsed: Record<string, unknown>;
       try { parsed = JSON.parse(String(data)) as Record<string, unknown>; } catch { return; }
@@ -317,18 +347,13 @@ export class GatewayService {
         const workerId = workerIdFromSessionKey(sessionKey);
         if (!workerId) return;
         const message = payload?.message;
-        const { text, hasToolCall } = extractAssistantMessage(message);
+        const { text: assistantText } = extractAssistantMessage(message);
+        const toolText = extractToolOutput(message);
+        const text = assistantText || toolText;
         if (!text) return;
-
-        const progressSignalInText = /进度|处理中|执行中|步骤|阶段|批次|已完成|running|progress|processing|step/i.test(text);
-        if (!hasToolCall && !progressSignalInText) return;
 
         const compact = text.replace(/\s+/g, ' ').trim();
         if (!compact) return;
-        const progressHint = /(开始|执行|处理中|进度|完成|导出|第\d+条|batch|step|progress|running)/i;
-        const noisyHint = /(\*\*Prompt\s*\d+|Prompt\s*\d+|Subject:|Dear\s|```|rawChars|schemaChars|propertiesCount|injectedChars|finalPromptText|finalAssistantRawText)/i;
-        if (!progressHint.test(compact) || noisyHint.test(compact)) return;
-        if (compact.length > 180 && !/(进度|完成|导出|第\d+条|开始执行|批量)/i.test(compact)) return;
         const now = Date.now();
         const prev = this.wsProgressDedupe.get(workerId);
         if (prev && prev.text === compact && now - prev.ts < 15000) return;
@@ -338,6 +363,7 @@ export class GatewayService {
 
         const win = BrowserWindow.getAllWindows()[0];
         win?.webContents.send('cron:message', { workerId, content: `🟡 进度: ${content}`, role: 'assistant' });
+        for (const listener of this.workerEventListeners) listener({ workerId, content: `🟡 进度: ${content}`, role: 'assistant' });
         return;
       }
 
@@ -355,6 +381,7 @@ export class GatewayService {
 
         const win = BrowserWindow.getAllWindows()[0];
         win?.webContents.send('cron:message', { workerId: agentId, content, role: 'assistant' });
+        for (const listener of this.workerEventListeners) listener({ workerId: agentId, content, role: 'assistant' });
       }
 
       if (connected && parsed.type === 'event') {

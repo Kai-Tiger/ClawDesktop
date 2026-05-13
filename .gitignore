@@ -9,3 +9,4 @@ runtime/
 app/electron/release/
 .DS_Store
 __pycache__
+mobile/

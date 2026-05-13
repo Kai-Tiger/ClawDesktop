@@ -83,6 +83,7 @@ def find_in_chat_history(chat_history_path: str, message_id: str) -> Optional[Di
                     "index": idx,
                     "assistant": msg,
                     "prev_user": prev_user,
+                    "items": items,
                 }
 
     group_messages = data.get("groupMessages", {})
@@ -405,6 +406,11 @@ def collect_http_token_usage(
     return out
 
 
+def find_http_session_jsonl(logs_dir: str, trace_id: str) -> Optional[str]:
+    p = os.path.join(logs_dir, "http-sessions", f"{trace_id}.jsonl")
+    return p if os.path.exists(p) else None
+
+
 def find_jsonl_by_session_id(sessions_root: str, session_id: str) -> Optional[str]:
     pattern = os.path.join(sessions_root, "agents", "*", "sessions", f"{session_id}.jsonl")
     matches = glob(pattern)
@@ -438,7 +444,7 @@ def read_jsonl(path: str) -> List[Tuple[int, Dict[str, Any]]]:
     return rows
 
 
-def find_chain_in_jsonl(rows: List[Tuple[int, Dict[str, Any]]], run_id: Optional[str]) -> Dict[str, Any]:
+def find_chain_in_jsonl(rows: List[Tuple[int, Dict[str, Any]]], run_id: Optional[str], trace_id: Optional[str] = None) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "custom_row": None,
         "user_row": None,
@@ -453,6 +459,16 @@ def find_chain_in_jsonl(rows: List[Tuple[int, Dict[str, Any]]], run_id: Optional
                 continue
             data = obj.get("data")
             if isinstance(data, dict) and data.get("runId") == run_id:
+                custom_idx = idx
+                out["custom_row"] = (idx, obj)
+                break
+
+    if custom_idx is None and trace_id:
+        for idx, obj in rows:
+            if obj.get("type") != "custom":
+                continue
+            data = obj.get("data")
+            if isinstance(data, dict) and data.get("traceId") == trace_id:
                 custom_idx = idx
                 out["custom_row"] = (idx, obj)
                 break
@@ -497,6 +513,130 @@ def extract_first_text_block(message_obj: Dict[str, Any]) -> str:
         if isinstance(blk, dict) and blk.get("type") == "text":
             return blk.get("text", "")
     return ""
+
+
+def count_cjk(text: str) -> int:
+    """Count CJK Unified Ideograph characters (covers common Chinese/Japanese/Korean)."""
+    count = 0
+    for c in text:
+        cp = ord(c)
+        if (0x4E00 <= cp <= 0x9FFF or    # CJK Unified Ideographs
+                0x3400 <= cp <= 0x4DBF or    # CJK Extension A
+                0x20000 <= cp <= 0x2A6DF or  # CJK Extension B
+                0xF900 <= cp <= 0xFAFF):     # CJK Compatibility Ideographs
+            count += 1
+    return count
+
+
+def est_tokens_from_text(text: str) -> int:
+    """Estimate tokens by chars/2.7."""
+    return int(round(len(text) / 2.7))
+
+
+def extract_all_text_stats(message_obj: Dict[str, Any]) -> Tuple[int, int]:
+    """Returns (total_chars, cjk_chars) for a JSONL message object."""
+    message = message_obj.get("message", {})
+    content = message.get("content")
+    texts: List[str] = []
+    if isinstance(content, str):
+        texts.append(content)
+    elif isinstance(content, list):
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "text":
+                texts.append(blk.get("text", ""))
+    total = sum(len(t) for t in texts)
+    cjk = sum(count_cjk(t) for t in texts)
+    return total, cjk
+
+
+def collect_history_chars_from_jsonl(
+    rows: List[Tuple[int, Dict[str, Any]]],
+    start_before_idx: int,
+    history_count: Optional[int],
+) -> Tuple[int, int, int]:
+    """Walk backwards from start_before_idx collecting message rows.
+    Returns (total_chars, cjk_chars, actual_msg_count).
+    """
+    by_idx = {idx: obj for idx, obj in rows}
+    total_chars = 0
+    cjk_chars = 0
+    msg_count = 0
+    for i in range(start_before_idx - 1, 0, -1):
+        obj = by_idx.get(i)
+        if not obj or obj.get("type") != "message":
+            continue
+        t, c = extract_all_text_stats(obj)
+        total_chars += t
+        cjk_chars += c
+        msg_count += 1
+        if history_count is not None and msg_count >= history_count:
+            break
+    return total_chars, cjk_chars, msg_count
+
+
+def chat_history_msg_text_stats(msg: Dict[str, Any]) -> Tuple[int, int]:
+    """Returns (total_chars, cjk_chars) for a chat-history message."""
+    content = msg.get("content")
+    texts: List[str] = []
+    if isinstance(content, str):
+        texts.append(content)
+    elif isinstance(content, list):
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "text":
+                texts.append(blk.get("text", ""))
+    total = sum(len(t) for t in texts)
+    cjk = sum(count_cjk(t) for t in texts)
+    return total, cjk
+
+
+def collect_history_chars_from_chat_history(
+    items: List[Dict[str, Any]],
+    assistant_index: int,
+    history_count: Optional[int],
+) -> Tuple[int, int, int]:
+    """Walk backwards from assistant_index in chat-history items.
+    Skips the current user message (index just before assistant), then collects
+    up to history_count messages. Returns (total_chars, cjk_chars, actual_msg_count).
+    """
+    total_chars = 0
+    cjk_chars = 0
+    msg_count = 0
+    skip_one_user = True
+    for j in range(assistant_index - 1, -1, -1):
+        m = items[j]
+        if not isinstance(m, dict):
+            continue
+        if skip_one_user and m.get("role") == "user":
+            skip_one_user = False
+            continue
+        t, c = chat_history_msg_text_stats(m)
+        total_chars += t
+        cjk_chars += c
+        msg_count += 1
+        if history_count is not None and msg_count >= history_count:
+            break
+    return total_chars, cjk_chars, msg_count
+
+
+def read_workspace_cjk_stats(openclaw_root: str, worker_id: Optional[str]) -> Tuple[int, int]:
+    """Read SOUL.md and AGENTS.md from the worker workspace and return (total_chars, cjk_chars).
+    Used to estimate CJK ratio for systemPrompt.
+    Returns (0, 0) if workspace not found."""
+    if not worker_id:
+        return 0, 0
+    workspace = os.path.join(openclaw_root, f"workspace-{worker_id}")
+    total = 0
+    cjk = 0
+    for fname in ("SOUL.md", "AGENTS.md"):
+        fpath = os.path.join(workspace, fname)
+        if os.path.exists(fpath):
+            try:
+                text = open(fpath, encoding="utf-8", errors="replace").read()
+                total += len(text)
+                cjk += count_cjk(text)
+            except OSError:
+                pass
+    return total, cjk
 
 
 def find_session_key_in_sessions_json(app_support: str, worker_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
@@ -554,7 +694,7 @@ def normalize_real_usage(raw_usage: Dict[str, str]) -> Dict[str, Optional[int]]:
         "completion_tokens": None,
         "total_tokens": None,
         "cache_read_tokens": None,
-        "input_tokens": None,
+        "non_cached_tokens": None,
     }
 
     for k, v in raw_usage.items():
@@ -572,7 +712,7 @@ def normalize_real_usage(raw_usage: Dict[str, str]) -> Dict[str, Optional[int]]:
         elif "cacheread" in kl or "cache_read" in kl:
             candidates["cache_read_tokens"] = iv
         elif kl.endswith(".input") or kl == "input":
-            candidates["input_tokens"] = iv
+            candidates["non_cached_tokens"] = iv
     return candidates
 
 
@@ -942,9 +1082,73 @@ def extract_prompt_char_breakdown(
 
 
 def est_tokens(chars: Optional[int]) -> Optional[int]:
+    """Estimate tokens by chars/2.7."""
     if chars is None:
         return None
-    return int(round(chars / 4.0))
+    return int(round(chars / 2.7))
+
+
+def build_prompt_breakdown_lines(
+    dump_obj: Optional[Dict[str, Any]],
+    chain: Optional[Dict[str, Any]],
+    log_lines: List[Dict[str, Any]],
+    runtime_usage_obj: Optional[Dict[str, Any]],
+    logs_dir: str,
+    worker_id: Optional[str],
+) -> List[str]:
+    char_breakdown = extract_prompt_char_breakdown(dump_obj, chain, log_lines, runtime_usage_obj)
+    project_chars = char_breakdown.get("project_context_chars")
+    non_project_chars = char_breakdown.get("non_project_context_chars")
+    tool_chars = char_breakdown.get("tools_schema_chars")
+
+    if project_chars is None or non_project_chars is None:
+        ip, inp, _ = infer_worker_context_chars(logs_dir, worker_id)
+        if project_chars is None and ip is not None:
+            project_chars = ip
+        if non_project_chars is None and inp is not None:
+            non_project_chars = inp
+
+    project_files: List[str] = []
+    if isinstance(runtime_usage_obj, dict):
+        spr = runtime_usage_obj.get("systemPromptReport")
+        if isinstance(spr, dict):
+            files = spr.get("injectedWorkspaceFiles")
+            if isinstance(files, list):
+                for f in files:
+                    if not isinstance(f, dict):
+                        continue
+                    n = str(f.get("name") or "").strip()
+                    if n:
+                        project_files.append(n)
+    if project_files:
+        if len(project_files) >= 2:
+            project_label = f"{project_files[0]}+{project_files[1]}+....others"
+        else:
+            project_label = f"{project_files[0]}+....others"
+    else:
+        project_label = "AGENTS.md+SOUL.md+....others"
+
+    est_project = est_tokens(project_chars)
+    est_non_project = est_tokens(non_project_chars)
+    est_tools = est_tokens(tool_chars)
+
+    lines: List[str] = []
+    lines.append(
+        "projectContextChars "
+        f"({project_label}) = {est_project if est_project is not None else 'N/A'} tokens"
+    )
+
+    lines.append(
+        "nonProjectContextChars "
+        f"(skills.promptChars + otherSystemChars) = {est_non_project if est_non_project is not None else 'N/A'} tokens"
+    )
+
+    lines.append(f"tools.schemaChars(corn + message + browser+....) = {est_tools if est_tools is not None else 'N/A'} tokens")
+
+    total_vals = [v for v in [est_project, est_non_project, est_tools] if v is not None]
+    total_est = sum(total_vals) if total_vals else None
+    lines.append(f"total est input token = {total_est if total_est is not None else 'N/A'} token")
+    return lines
 
 
 def extract_tools_schema_breakdown(runtime_usage: Optional[Dict[str, Any]], dump: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -991,6 +1195,93 @@ def extract_tools_schema_breakdown(runtime_usage: Optional[Dict[str, Any]], dump
     return out
 
 
+def extract_skills_breakdown(runtime_usage: Optional[Dict[str, Any]]) -> Dict[str, Optional[int]]:
+    out: Dict[str, Optional[int]] = {
+        "prompt_chars": None,
+        "entries_sum": None,
+        "wrapper_chars": None,
+        "entries_count": None,
+    }
+    if not isinstance(runtime_usage, dict):
+        return out
+
+    spr = runtime_usage.get("systemPromptReport")
+    if not isinstance(spr, dict):
+        return out
+
+    skills = spr.get("skills")
+    if not isinstance(skills, dict):
+        return out
+
+    prompt_chars = to_int(skills.get("promptChars"))
+    entries = skills.get("entries") if isinstance(skills.get("entries"), list) else []
+    entries_sum = 0
+    has_entries = False
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        iv = to_int(e.get("blockChars"))
+        if iv is None:
+            continue
+        entries_sum += iv
+        has_entries = True
+
+    out["prompt_chars"] = prompt_chars
+    out["entries_count"] = len(entries)
+    if has_entries:
+        out["entries_sum"] = entries_sum
+    if prompt_chars is not None and has_entries:
+        out["wrapper_chars"] = prompt_chars - entries_sum
+    return out
+
+
+def collect_recent_other_system_samples(
+    openclaw_root: str,
+    worker_id: Optional[str],
+    limit: int = 40,
+) -> List[Tuple[str, str, int]]:
+    if not worker_id:
+        return []
+
+    p = os.path.join(openclaw_root, "logs", "gateway-runtime-usage.jsonl")
+    if not os.path.exists(p):
+        return []
+
+    rows: List[Tuple[str, str, int]] = []
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                if str(obj.get("agentId") or "") != worker_id:
+                    continue
+                spr = obj.get("systemPromptReport")
+                if not isinstance(spr, dict):
+                    continue
+                sp = spr.get("systemPrompt") if isinstance(spr.get("systemPrompt"), dict) else {}
+                skills = spr.get("skills") if isinstance(spr.get("skills"), dict) else {}
+                npc = to_int(sp.get("nonProjectContextChars"))
+                sk = to_int(skills.get("promptChars"))
+                if npc is None or sk is None:
+                    continue
+                ts = str(obj.get("ts") or "")
+                trace = str(obj.get("traceId") or "")
+                rows.append((ts, trace, npc - sk))
+    except OSError:
+        return []
+
+    if len(rows) <= limit:
+        return rows
+    return rows[-limit:]
+
+
 def main() -> None:
     args = parse_args()
     message_id = args.message_id.strip()
@@ -1024,11 +1315,14 @@ def main() -> None:
         jsonl_path = find_jsonl_by_session_id(openclaw_root, session_id)
     if not jsonl_path and run_id:
         jsonl_path = find_jsonl_by_run_id(openclaw_root, run_id)
+    if not jsonl_path:
+        jsonl_path = find_http_session_jsonl(logs_dir, message_id)
 
+    rows: List[Tuple[int, Dict[str, Any]]] = []
     chain = None
-    if jsonl_path and run_id:
+    if jsonl_path:
         rows = read_jsonl(jsonl_path)
-        chain = find_chain_in_jsonl(rows, run_id)
+        chain = find_chain_in_jsonl(rows, run_id, trace_id=message_id)
 
     session_key = status_info.get("session_key")
     if not session_key:
@@ -1055,6 +1349,14 @@ def main() -> None:
 
     runtime_usage_obj: Optional[Dict[str, Any]] = find_runtime_usage_by_trace(logs_dir, openclaw_root, message_id, run_id)
     normalized_usage: Dict[str, Optional[int]] = {}
+    prompt_breakdown_lines = build_prompt_breakdown_lines(
+        None,
+        chain,
+        log_lines,
+        runtime_usage_obj,
+        logs_dir,
+        worker_id,
+    )
 
     print("\n== Route ==")
     route = infer_route(timing)
@@ -1095,26 +1397,22 @@ def main() -> None:
                 cache_read = to_int(raw_usage_obj.get("cacheRead")) if isinstance(raw_usage_obj, dict) else None
                 if cache_read is not None:
                     normalized["cache_read_tokens"] = cache_read
-                if normalized.get("input_tokens") is None:
-                    normalized["input_tokens"] = to_int(raw_usage_obj.get("input")) if isinstance(raw_usage_obj, dict) else None
+                if normalized.get("non_cached_tokens") is None:
+                    normalized["non_cached_tokens"] = to_int(raw_usage_obj.get("input")) if isinstance(raw_usage_obj, dict) else None
             normalized_usage = normalized
-            real_bits = []
-            for k in [
-                "prompt_tokens",
-                "completion_tokens",
-                "total_tokens",
-                "cache_read_tokens",
-                "input_tokens",
-            ]:
-                if normalized.get(k) is not None:
-                    real_bits.append(f"{k}={normalized[k]}")
-            if real_bits:
-                print(
-                    ANSI_BOLD_RED
-                    + "real usage (normalized): "
-                    + " ".join(real_bits)
-                    + ANSI_RESET
-                )
+            has_usage = any(normalized.get(k) is not None for k in ["prompt_tokens", "completion_tokens", "total_tokens", "cache_read_tokens", "non_cached_tokens"])
+            if has_usage:
+                pt = normalized.get("prompt_tokens")
+                cr = normalized.get("cache_read_tokens")
+                nc = normalized.get("non_cached_tokens")
+                prompt_line = f"prompt_tokens({pt if pt is not None else 'N/A'}) = cache_read_tokens({cr if cr is not None else 'N/A'}) + non_cached_tokens({nc if nc is not None else 'N/A'})"
+                print(ANSI_BOLD_RED + prompt_line + ANSI_RESET)
+                for k in ["completion_tokens", "total_tokens"]:
+                    if normalized.get(k) is not None:
+                        print(ANSI_BOLD_RED + f"{k}={normalized[k]}" + ANSI_RESET)
+                print("Local prompt breakdown:")  
+                for line in prompt_breakdown_lines:
+                    print(line)
         else:
             print("http token usage: N/A (no usage/token fields found in logs or session custom data)")
 
@@ -1317,6 +1615,28 @@ def main() -> None:
                         + " ".join(f"{name}={chars}" for name, chars in skill_bits)
                     )
 
+    skills_breakdown = extract_skills_breakdown(runtime_usage_obj)
+    if skills_breakdown.get("prompt_chars") is not None:
+        print(
+            "skills detailed chars(runtime): "
+            f"promptChars={skills_breakdown['prompt_chars']} "
+            f"entriesSum={skills_breakdown['entries_sum'] if skills_breakdown['entries_sum'] is not None else 'N/A'} "
+            f"wrapperChars={skills_breakdown['wrapper_chars'] if skills_breakdown['wrapper_chars'] is not None else 'N/A'} "
+            f"entriesCount={skills_breakdown['entries_count'] if skills_breakdown['entries_count'] is not None else 'N/A'}"
+        )
+
+    if non_project_chars is not None and skill_chars is not None:
+        stable_samples = collect_recent_other_system_samples(openclaw_root, worker_id, limit=40)
+        if stable_samples:
+            vals = [v for _, _, v in stable_samples]
+            uniq = sorted(set(vals))
+            print(
+                "otherSystem baseline(recent): "
+                f"current={non_project_chars - skill_chars} "
+                f"recentMin={min(vals)} recentMax={max(vals)} "
+                f"recentUnique={','.join(str(v) for v in uniq[:8]) + ('...' if len(uniq) > 8 else '')}"
+            )
+
     tools_breakdown = extract_tools_schema_breakdown(runtime_usage_obj, dump_obj)
     tools_total = tools_breakdown.get("total_chars")
     tools_list = tools_breakdown.get("list_chars")
@@ -1353,11 +1673,27 @@ def main() -> None:
             parts = [f"{name}({schema_chars})" for name, schema_chars in parsed]
             print("total tools.schema = " + " + ".join(parts))
 
-    est_bits = []
-    est_user = est_tokens(user_chars)
-    est_sys = est_tokens(sys_chars)
+    # --- userInput: use actual text from chain user_row when available ---
+    est_user: Optional[int] = None
+    if chain and chain.get("user_row"):
+        u_total, _u_cjk = extract_all_text_stats(chain["user_row"][1])
+        if u_total > 0:
+            est_user = est_tokens(u_total)
+    if est_user is None:
+        est_user = est_tokens(user_chars)
+
+    # --- systemPrompt: estimate by chars/2.7 ---
+    est_sys: Optional[int] = None
+    if sys_chars is not None:
+        est_sys = est_tokens(sys_chars)
+
+    # --- tools schema: estimate by chars/2.7 ---
     est_tool = est_tokens(tool_chars)
+
+    # --- skills: estimate by chars/2.7 ---
     est_skill = est_tokens(skill_chars)
+
+    est_bits = []
     if est_user is not None:
         est_bits.append(f"userInput≈{est_user}")
     if est_sys is not None:
@@ -1367,23 +1703,67 @@ def main() -> None:
     if est_skill is not None:
         est_bits.append(f"skills≈{est_skill}")
     if est_bits:
-        print(ANSI_BOLD_RED + "estimated tokens (chars/4): " + " ".join(est_bits) + ANSI_RESET)
+        print(ANSI_BOLD_RED + "estimated tokens (chars/2.7): " + " ".join(est_bits) + ANSI_RESET)
     else:
-        print("estimated tokens (chars/4): N/A")
+        print("estimated tokens: N/A")
+
+    history_count_from_meta: Optional[int] = None
+    if timing.get("req_meta"):
+        rm = parse_req_meta(timing["req_meta"]["msg"])
+        history_count_from_meta = to_int(rm.get("history"))
+
+    hist_chars = 0
+    hist_cjk = 0
+    hist_msg_count = 0
+    if rows and chain:
+        start_idx: Optional[int] = None
+        if chain.get("user_row"):
+            start_idx = chain["user_row"][0]
+        elif chain.get("assistant_row"):
+            start_idx = chain["assistant_row"][0]
+        if start_idx is not None:
+            hist_chars, hist_cjk, hist_msg_count = collect_history_chars_from_jsonl(
+                rows, start_idx, history_count_from_meta
+            )
+
+    hist_source = "jsonl"
+    if not hist_chars and history_hit.get("items") and history_hit.get("index") is not None:
+        hist_chars, hist_cjk, hist_msg_count = collect_history_chars_from_chat_history(
+            history_hit["items"], history_hit["index"], history_count_from_meta
+        )
+        hist_source = "chat-history.json"
+
+    est_history = est_tokens(hist_chars) if hist_chars else None
+    if est_history is not None:
+        print(
+            ANSI_BOLD_RED
+            + f"estimated history tokens (chars/2.7): ≈{est_history}"
+            + f"  ({hist_msg_count} msgs, {hist_chars} chars, {hist_cjk} CJK, src={hist_source}"
+            + (f", capped at history={history_count_from_meta}" if history_count_from_meta is not None else "")
+            + ")"
+            + ANSI_RESET
+        )
+    else:
+        print("estimated history tokens: N/A (no history found in JSONL or chat-history)")
 
     tracked_est_core = None
     vals_core = [v for v in [est_user, est_sys, est_tool] if v is not None]
     if vals_core:
         tracked_est_core = sum(vals_core)
 
-    tracked_est_with_skills = None
-    vals_with_skills = [v for v in [est_user, est_sys, est_tool, est_skill] if v is not None]
-    if vals_with_skills:
-        tracked_est_with_skills = sum(vals_with_skills)
+    tracked_est_with_history = None
+    vals_with_history = [v for v in [est_user, est_sys, est_tool, est_history] if v is not None]
+    if vals_with_history:
+        tracked_est_with_history = sum(vals_with_history)
 
     print(
         "prompt tokens compare(core): "
         f"tracked_est_core={tracked_est_core if tracked_est_core is not None else 'N/A'} "
+        f"real_prompt_tokens={prompt_tokens_real if prompt_tokens_real is not None else 'N/A'}"
+    )
+    print(
+        "prompt tokens compare(with-history): "
+        f"tracked_est_with_history={tracked_est_with_history if tracked_est_with_history is not None else 'N/A'} "
         f"real_prompt_tokens={prompt_tokens_real if prompt_tokens_real is not None else 'N/A'}"
     )
     # print(

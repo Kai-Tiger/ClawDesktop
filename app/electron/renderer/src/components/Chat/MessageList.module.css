@@ -4,6 +4,27 @@
   padding: 16px;
 }
 
+.sessionDivider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+  color: #9ba8c2;
+}
+
+.sessionDividerLine {
+  flex: 1;
+  height: 1px;
+  background: #e2e7f0;
+}
+
+.sessionDividerLabel {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
 .progressPanel {
   margin: 0 0 12px;
   border: 1px solid #e6e9f2;

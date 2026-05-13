@@ -29,8 +29,15 @@ export function useChat() {
     setSending(workerId, true);
 
     const existingMessages = messagesMap[workerId] ?? [];
-    const history = existingMessages
-      .filter((m) => !isThinking(m.content))
+    const lastDividerIdx = (() => {
+      for (let i = existingMessages.length - 1; i >= 0; i -= 1) {
+        if (existingMessages[i]?.role === 'divider') return i;
+      }
+      return -1;
+    })();
+    const scopedMessages = lastDividerIdx >= 0 ? existingMessages.slice(lastDividerIdx + 1) : existingMessages;
+    const history = scopedMessages
+      .filter((m) => !isThinking(m.content) && m.role !== 'divider')
       .map((m) => ({ role: m.role as string, content: m.content }));
 
     pushMessage(workerId, {

@@ -7,7 +7,38 @@ import type { SessionService } from './session-service';
 import type { GatewayService } from './gateway-service';
 
 export class ConfigService {
-  private readonly imagePresetModel = 'google/gemini-3.1-flash-image-preview';
+  private readonly imagePresetModel = 'openai/gpt-5.4-image-2';
+
+  private readonly workerToolCatalog = [
+    'cron',
+    'browser',
+    'message',
+    'read',
+    'edit',
+    'write',
+    'exec',
+    'process',
+    'canvas',
+    'nodes',
+    'gateway',
+    'tts',
+    'web_fetch',
+    'web_search',
+    'webfetch',
+    'memory_search',
+    'memory_get',
+    'memory_set',
+    'memory_list',
+    'memory_delete',
+    'agents_list',
+    'sessions_list',
+    'sessions_history',
+    'sessions_send',
+    'sessions_yield',
+    'sessions_spawn',
+    'subagents',
+    'session_status',
+  ];
 
   private readonly imagePresetToolDeny = [
     'read',
@@ -59,7 +90,8 @@ export class ConfigService {
     try {
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       const agents = Array.isArray(raw?.agents?.list) ? raw.agents.list : [];
-      const found = agents.find((a: { id?: string; model?: string }) => a?.id === id);
+      const idLower = id.toLowerCase();
+      const found = agents.find((a: { id?: string; model?: string }) => (a?.id || '').toLowerCase() === idLower);
       const full = typeof found?.model === 'string' ? found.model : '';
       return full || this.getConfiguredModelFull();
     } catch {
@@ -85,7 +117,8 @@ export class ConfigService {
     try {
       const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       const agents = Array.isArray(raw?.agents?.list) ? raw.agents.list : [];
-      const found = agents.find((a: { id?: string; model?: string }) => a?.id === id);
+      const idLower = id.toLowerCase();
+      const found = agents.find((a: { id?: string; model?: string }) => (a?.id || '').toLowerCase() === idLower);
       const full = typeof found?.model === 'string' ? found.model : '';
       if (!full) return this.getModel();
       return full.startsWith('openrouter/') ? full.slice('openrouter/'.length) : full;
@@ -139,11 +172,19 @@ export class ConfigService {
       raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
 
       const full = `openrouter/${selected}`;
-      const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === id);
+      const idLower = id.toLowerCase();
+      const idx = raw.agents.list.findIndex((a: { id?: string }) => (a?.id || '').toLowerCase() === idLower);
+      const existing = idx >= 0 ? { ...raw.agents.list[idx] } : { id };
+      existing.model = full;
+      // If image preset tools were active (profile: 'minimal'), restore default tool restrictions
+      const existingTools = existing.tools as Record<string, unknown> | undefined;
+      if (existingTools && existingTools.profile === 'minimal') {
+        existing.tools = { deny: [...this.paths.deniedSubagentTools] };
+      }
       if (idx >= 0) {
-        raw.agents.list[idx] = { ...raw.agents.list[idx], model: full };
+        raw.agents.list[idx] = existing;
       } else {
-        raw.agents.list.push({ id, model: full });
+        raw.agents.list.push(existing);
       }
 
       fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
@@ -160,9 +201,39 @@ export class ConfigService {
     }
   }
 
-  async applyWorkerImagePreset(workerId: string): Promise<{ ok: boolean; error?: string; model?: string }> {
+  getWorkerTools(workerId: string): { tools: Array<{ id: string; enabled: boolean }> } {
     const id = (workerId || '').trim();
+    if (!id) return { tools: this.workerToolCatalog.map((toolId) => ({ id: toolId, enabled: true })) };
+
+    const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
+    try {
+      const raw = fs.existsSync(configPath)
+        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+        : {};
+      const agents = Array.isArray(raw?.agents?.list) ? raw.agents.list : [];
+      const idLower = id.toLowerCase();
+      const found = agents.find((a: { id?: string; tools?: unknown }) => (a?.id || '').toLowerCase() === idLower);
+      const toolsObj = found?.tools && typeof found.tools === 'object'
+        ? (found.tools as Record<string, unknown>)
+        : {};
+      const denyList = Array.isArray(toolsObj.deny)
+        ? toolsObj.deny.filter((v: unknown): v is string => typeof v === 'string')
+        : [];
+      const denySet = new Set(denyList);
+      return {
+        tools: this.workerToolCatalog.map((toolId) => ({ id: toolId, enabled: !denySet.has(toolId) })),
+      };
+    } catch {
+      return { tools: this.workerToolCatalog.map((toolId) => ({ id: toolId, enabled: true })) };
+    }
+  }
+
+  async setWorkerToolEnabled(workerId: string, toolId: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+    const id = (workerId || '').trim();
+    const tool = (toolId || '').trim();
     if (!id) return { ok: false, error: 'workerId 不能为空' };
+    if (!tool) return { ok: false, error: 'toolId 不能为空' };
+    if (!this.workerToolCatalog.includes(tool)) return { ok: false, error: `不支持的工具: ${tool}` };
 
     const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
     try {
@@ -172,8 +243,61 @@ export class ConfigService {
       raw.agents = raw.agents || {};
       raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
 
-      const fullModel = `openrouter/${this.imagePresetModel}`;
-      const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === id);
+      const idLower = id.toLowerCase();
+      const idx = raw.agents.list.findIndex((a: { id?: string }) => (a?.id || '').toLowerCase() === idLower);
+      const existing = idx >= 0 ? { ...raw.agents.list[idx] } : { id };
+
+      const toolsObj = existing.tools && typeof existing.tools === 'object'
+        ? { ...(existing.tools as Record<string, unknown>) }
+        : {};
+      const denyList = Array.isArray(toolsObj.deny)
+        ? toolsObj.deny.filter((v: unknown): v is string => typeof v === 'string')
+        : [];
+      const denySet = new Set(denyList);
+
+      if (enabled) {
+        denySet.delete(tool);
+      } else {
+        denySet.add(tool);
+      }
+
+      toolsObj.deny = [...denySet];
+      if (toolsObj.profile === 'minimal') {
+        toolsObj.profile = 'custom';
+      }
+      existing.tools = toolsObj;
+
+      if (idx >= 0) {
+        raw.agents.list[idx] = existing;
+      } else {
+        raw.agents.list.push(existing);
+      }
+
+      fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
+      this.sessions.clearAgentSessionSnapshot(id);
+      await this.gateway.restartGateway();
+      return { ok: true };
+    } catch (err: unknown) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async applyWorkerImagePreset(workerId: string, model?: string): Promise<{ ok: boolean; error?: string; model?: string }> {
+    const id = (workerId || '').trim();
+    if (!id) return { ok: false, error: 'workerId 不能为空' };
+
+    const targetModel = (model || '').trim() || this.imagePresetModel;
+    const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
+    try {
+      const raw = fs.existsSync(configPath)
+        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+        : {};
+      raw.agents = raw.agents || {};
+      raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
+
+      const fullModel = `openrouter/${targetModel}`;
+      const idLower = id.toLowerCase();
+      const idx = raw.agents.list.findIndex((a: { id?: string }) => (a?.id || '').toLowerCase() === idLower);
       const nextTools = {
         profile: 'minimal',
         allow: [],
@@ -191,16 +315,16 @@ export class ConfigService {
 
       fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
       const saved = this.getWorkerModel(id);
-      if (saved !== this.imagePresetModel) {
+      if (saved !== targetModel) {
         return {
           ok: false,
-          error: `配置未能写入：期望 ${this.imagePresetModel}，实际读到 ${saved || '(空)'}`,
+          error: `配置未能写入：期望 ${targetModel}，实际读到 ${saved || '(空)'}`,
         };
       }
 
       this.sessions.clearAgentSessionSnapshot(id);
       await this.gateway.restartGateway();
-      return { ok: true, model: this.imagePresetModel };
+      return { ok: true, model: targetModel };
     } catch (err: unknown) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
