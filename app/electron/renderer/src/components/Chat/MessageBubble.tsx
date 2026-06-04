@@ -355,7 +355,7 @@ export function MessageBubble({
             onClick={() => void workerOpenFileLocation(workerId, text)}
             title={`定位文件: ${text}`}
           >
-            <code className="font-mono text-[0.9em] underline decoration-dashed underline-offset-2">
+            <code className="font-mono text-[0.9em] underline decoration-dashed underline-offset-2 break-all">
               {children}
             </code>
             <span className="select-none text-[11px] leading-none">📂</span>

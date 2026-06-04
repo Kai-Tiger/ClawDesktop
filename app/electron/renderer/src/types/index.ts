@@ -121,6 +121,17 @@ export interface GroupChannel {
   workerIds: string[];
 }
 
+export interface ThreadMessage {
+  id: string;
+  msgId?: string;
+  role: 'user' | 'worker' | 'system';
+  workerId?: string;
+  workerName?: string;
+  content: MessageContent;
+  timestamp?: number;
+  completedAt?: number;
+}
+
 export interface GroupMessage {
   id: string;
   msgId?: string;
@@ -130,6 +141,7 @@ export interface GroupMessage {
   content: MessageContent;
   timestamp?: number;
   completedAt?: number;
+  threadMessages?: ThreadMessage[];
 }
 
 export interface CoordinatorTask {

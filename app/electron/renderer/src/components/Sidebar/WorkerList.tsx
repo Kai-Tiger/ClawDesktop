@@ -19,6 +19,7 @@ import {
 } from "../../api/gateway";
 import type { WorkerZipProbe, SkillMeta, SkillImportSource } from "../../types";
 import { ImportWorkerDialog } from "./ImportWorkerDialog";
+import { CopyWorkerDialog } from "./CopyWorkerDialog";
 import { DeleteWorkerDialog } from "./DeleteWorkerDialog";
 import styles from "./WorkerList.module.css";
 
@@ -75,6 +76,11 @@ export function WorkerList({
   const [workerMetaError, setWorkerMetaError] = useState("");
   const [showCreateMenu, setShowCreateMenu] = useState(false);
   const createMenuRef = useRef<HTMLDivElement | null>(null);
+  const [copyingWorker, setCopyingWorker] = useState<{
+    id: string;
+    name: string;
+    description: string;
+  } | null>(null);
 
   useEffect(() => {
     workers
@@ -474,6 +480,15 @@ export function WorkerList({
                       </button>
                       <button
                         className={styles.workerMenuItem}
+                        onClick={() => {
+                          setActiveWorkerMenu(null);
+                          setCopyingWorker({ id: w.id, name: w.name, description: w.description ?? '' });
+                        }}
+                      >
+                        复制
+                      </button>
+                      <button
+                        className={styles.workerMenuItem}
                         onClick={() => openWorkerMetaEditor(w)}
                       >
                         编辑信息
@@ -543,6 +558,20 @@ export function WorkerList({
           probe={probe}
           onSuccess={handleImportSuccess}
           onCancel={() => setProbe(null)}
+        />
+      )}
+
+      {copyingWorker && (
+        <CopyWorkerDialog
+          sourceId={copyingWorker.id}
+          sourceName={copyingWorker.name}
+          sourceDescription={copyingWorker.description}
+          onSuccess={(newId) => {
+            setCopyingWorker(null);
+            onImportSuccess?.();
+            selectWorker(newId);
+          }}
+          onCancel={() => setCopyingWorker(null)}
         />
       )}
 

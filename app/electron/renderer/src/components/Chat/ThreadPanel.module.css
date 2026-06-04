@@ -1,0 +1,206 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  /* width is controlled via inline style; min/max enforced in JS */
+  min-width: 260px;
+  max-width: 720px;
+  border-left: 1px solid #e5e7eb;
+  background: #fafafa;
+  overflow: hidden;
+  animation: slideIn 0.2s ease;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.resizeHandle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.resizeHandle:hover,
+.resizeHandle:active {
+  background: #5b8cff;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+  background: #fff;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.closeBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: #9ca3af;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.closeBtn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Single scroll container: parentMsg + divider + messages all scroll together */
+.contentArea {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.parentMsg {
+  flex-shrink: 0;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.replyCountLine {
+  font-size: 11px;
+  color: #5b8cff;
+  margin-top: 6px;
+  padding-left: 2px;
+}
+
+.divider {
+  height: 1px;
+  background: #e5e7eb;
+  flex-shrink: 0;
+}
+
+.messages {
+  flex: 1;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.systemMsg {
+  text-align: center;
+  font-size: 11px;
+  color: #9ca3af;
+  margin: 6px 0;
+  user-select: none;
+}
+
+.composer {
+  padding: 10px 12px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  background: #fff;
+}
+
+.hint {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.hintLabel {
+  font-size: 11px;
+  color: #d1d5db;
+}
+
+.hintChip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 10px;
+  color: #fff;
+  opacity: 0.85;
+}
+
+.noTarget {
+  font-size: 12px;
+  color: #f59e0b;
+  padding: 4px 8px;
+  background: #fffbeb;
+  border-radius: 6px;
+  border: 1px solid #fde68a;
+}
+
+.inputRow {
+  display: flex;
+  gap: 6px;
+}
+
+.input {
+  flex: 1;
+  resize: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  min-height: 52px;
+  max-height: 120px;
+  line-height: 1.5;
+  background: #fff;
+}
+
+.input:focus {
+  border-color: #5b8cff;
+}
+
+.input:disabled {
+  opacity: 0.6;
+}
+
+.sendBtn {
+  align-self: flex-end;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  background: #111827;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sendBtn:hover:not(:disabled) {
+  background: #1f2937;
+}
+
+.sendBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

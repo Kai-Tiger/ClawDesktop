@@ -3,6 +3,7 @@ import { useChatStore } from '../../store/chatStore';
 import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, groupMemoryRead, groupMemoryWrite } from '../../api/gateway';
 import { MessageBubble } from './MessageBubble';
 import GroupContextDialog from './GroupContextDialog';
+import { ThreadPanel } from './ThreadPanel';
 import type { GroupMessage, WorkerMeta, CoordinatorPlan, MessageContent, ContentBlock } from '../../types';
 import styles from './GroupChatPanel.module.css';
 
@@ -89,6 +90,7 @@ export function GroupChatPanel() {
   const currentGroupId = useChatStore((s) => s.currentGroupId);
   const groupMessages = useChatStore((s) => s.groupMessages);
   const addGroupMessage = useChatStore((s) => s.addGroupMessage);
+  const addThreadMessage = useChatStore((s) => s.addThreadMessage);
   const allWorkers = useChatStore((s) => s.workers);
 
   const group = groups.find((g) => g.id === currentGroupId);
@@ -104,6 +106,7 @@ export function GroupChatPanel() {
   const [debugMode, setDebugMode] = useState(false);
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
+  const [threadParentId, setThreadParentId] = useState<string | null>(null);
   const setGroups = useChatStore((s) => s.setGroups);
   const groups2 = useChatStore((s) => s.groups);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -116,6 +119,7 @@ export function GroupChatPanel() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    setThreadParentId(null);
   }, [currentGroupId]);
 
   useEffect(() => {
@@ -127,6 +131,16 @@ export function GroupChatPanel() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    // Thread panel opening/closing changes the main panel width → text reflows →
+    // scrollHeight grows → scrollTop stays the same in pixels → looks like it jumped up.
+    // Wait one frame for layout to settle then restore to bottom.
+    const raf = requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [threadParentId]);
 
 
   const buildHistory = (gid: string) => {
@@ -152,10 +166,11 @@ export function GroupChatPanel() {
     groupName: string;
     worker: WorkerMeta;
     text: string;
+    parentMsgId: string;
     placeholderId: string;
     msgId: string;
   }) => {
-    const { gid, groupName, worker, text, placeholderId, msgId } = params;
+    const { gid, groupName, worker, text, parentMsgId, placeholderId, msgId } = params;
     const key = `${gid}:${worker.id}`;
     const workerLabel = worker.name || worker.id;
     const prior = chains.current.get(key) ?? Promise.resolve();
@@ -171,10 +186,10 @@ export function GroupChatPanel() {
         const result = await chatSend(worker.id, text, undefined, history, msgId, gid);
         const reply = stripDirectiveTagsInContent(result.reply);
         perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
-        useChatStore.getState().updateGroupMessage(gid, placeholderId, reply, Date.now());
+        useChatStore.getState().updateThreadMessage(gid, parentMsgId, placeholderId, reply, Date.now());
         console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel}: ${toPlainText(reply)}`);
       } catch (err) {
-        useChatStore.getState().updateGroupMessage(gid, placeholderId, '(发送失败)', Date.now());
+        useChatStore.getState().updateThreadMessage(gid, parentMsgId, placeholderId, '(发送失败)', Date.now());
         console.error(`[GroupChat][${groupName}][${new Date().toISOString()}] ← ${workerLabel} 失败:`, err);
       }
     });
@@ -213,7 +228,8 @@ export function GroupChatPanel() {
   const runCoordinator = async (
     targets: WorkerMeta[],
     userText: string,
-    fileContent?: string
+    fileContent?: string,
+    userMsgId?: string
   ) => {
     const gid = currentGroupId!;
     setPipelineRunning(true);
@@ -302,14 +318,16 @@ export function GroupChatPanel() {
 
             const pid = makeId('w', worker.id);
             const msgId = makeMsgId();
-            addGroupMessage(gid, {
-              id: pid,
-              msgId,
-              role: 'worker',
-              workerId: worker.id,
-              workerName: worker.name || worker.id,
-              content: '思考中...',
-            });
+            if (userMsgId) {
+              useChatStore.getState().addThreadMessage(gid, userMsgId, {
+                id: pid,
+                msgId,
+                role: 'worker',
+                workerId: worker.id,
+                workerName: worker.name || worker.id,
+                content: '思考中...',
+              });
+            }
 
             try {
               const history = buildHistory(gid);
@@ -319,9 +337,9 @@ export function GroupChatPanel() {
               const reply = stripDirectiveTagsInContent(result.reply);
               perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
               results.set(task.id, toPlainText(reply));
-              useChatStore.getState().updateGroupMessage(gid, pid, reply, Date.now());
+              if (userMsgId) useChatStore.getState().updateThreadMessage(gid, userMsgId, pid, reply, Date.now());
             } catch {
-              useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)', Date.now());
+              if (userMsgId) useChatStore.getState().updateThreadMessage(gid, userMsgId, pid, '(处理失败)', Date.now());
             }
           })
         );
@@ -343,11 +361,13 @@ export function GroupChatPanel() {
     if (attachedFile && targets.length >= 2) {
       inputRef.current!.value = '';
       localStorage.removeItem(`draft:group:${currentGroupId}`);
+      const userMsgId = makeId('u', 'user');
       addGroupMessage(currentGroupId, {
-        id: makeId('u', 'user'),
+        id: userMsgId,
         role: 'user',
         content: `${text}\n[文件: ${attachedFile.name}]`,
       });
+      setThreadParentId(userMsgId);
       const file = attachedFile;
       setAttachedFile(null);
       new Promise<string>((resolve, reject) => {
@@ -356,9 +376,8 @@ export function GroupChatPanel() {
         reader.onerror = reject;
         reader.readAsText(file);
       }).then((csvText) => {
-        // 协调者只收到文件名提示，不收到内容；内容由执行层直接注入给首个任务
         const textWithHint = `${text}（附件：${file.name}）`;
-        return runCoordinator(targets, textWithHint, csvText);
+        return runCoordinator(targets, textWithHint, csvText, userMsgId);
       }).catch(console.error);
       return;
     }
@@ -367,12 +386,14 @@ export function GroupChatPanel() {
     if (!attachedFile && targets.length >= 2) {
       inputRef.current!.value = '';
       localStorage.removeItem(`draft:group:${currentGroupId}`);
+      const userMsgId = makeId('u', 'user');
       addGroupMessage(currentGroupId, {
-        id: makeId('u', 'user'),
+        id: userMsgId,
         role: 'user',
         content: text,
       });
-      runCoordinator(targets, text).catch(console.error);
+      setThreadParentId(userMsgId);
+      runCoordinator(targets, text, undefined, userMsgId).catch(console.error);
       return;
     }
 
@@ -383,11 +404,13 @@ export function GroupChatPanel() {
       const [worker] = targets;
       const gid = currentGroupId;
       const file = attachedFile;
+      const userMsgId = makeId('u', 'user');
       addGroupMessage(gid, {
-        id: makeId('u', 'user'),
+        id: userMsgId,
         role: 'user',
         content: `${text}\n[文件: ${file.name}]`,
       });
+      setThreadParentId(userMsgId);
       setAttachedFile(null);
       new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -397,7 +420,7 @@ export function GroupChatPanel() {
       }).then((csvText) => {
         const pid = makeId('w', worker.id);
         const msgId = makeMsgId();
-        addGroupMessage(gid, {
+        useChatStore.getState().addThreadMessage(gid, userMsgId, {
           id: pid,
           msgId,
           role: 'worker',
@@ -412,9 +435,9 @@ export function GroupChatPanel() {
         return chatSend(worker.id, prompt, undefined, history, msgId, gid).then((result) => {
           const reply = stripDirectiveTagsInContent(result.reply);
           perfLog(msgId, 'IPC-recv', `total=${Date.now() - t0}ms replyLen=${toPlainText(reply).length}`);
-          useChatStore.getState().updateGroupMessage(gid, pid, reply, Date.now());
+          useChatStore.getState().updateThreadMessage(gid, userMsgId, pid, reply, Date.now());
         }).catch(() => {
-          useChatStore.getState().updateGroupMessage(gid, pid, '(处理失败)', Date.now());
+          useChatStore.getState().updateThreadMessage(gid, userMsgId, pid, '(处理失败)', Date.now());
         });
       }).catch(console.error);
       return;
@@ -442,18 +465,15 @@ export function GroupChatPanel() {
     const gid = currentGroupId;
     const groupName = group.name;
 
-    const userMsg: GroupMessage = {
-      id: makeId('u', 'user'),
-      role: 'user',
-      content: text,
-    };
-    addGroupMessage(gid, userMsg);
+    const userMsgId = makeId('u', 'user');
+    addGroupMessage(gid, { id: userMsgId, role: 'user', content: text });
+    setThreadParentId(userMsgId);
     console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] 用户: ${text}`);
 
     targets.forEach((worker) => {
       const placeholderId = makeId('w', worker.id);
       const msgId = makeMsgId();
-      addGroupMessage(gid, {
+      addThreadMessage(gid, userMsgId, {
         id: placeholderId,
         msgId,
         role: 'worker',
@@ -462,7 +482,7 @@ export function GroupChatPanel() {
         content: '思考中...',
       });
       console.log(`[GroupChat][${groupName}][${new Date().toISOString()}] → ${worker.name || worker.id} (已入队) msgId=${msgId}`);
-      enqueue({ gid, groupName, worker, text, placeholderId, msgId });
+      enqueue({ gid, groupName, worker, text, parentMsgId: userMsgId, placeholderId, msgId });
     });
   };
 
@@ -515,9 +535,11 @@ export function GroupChatPanel() {
   }
 
   const workerIds = group.workerIds;
+  const threadParentMsg = threadParentId ? messages.find((m) => m.id === threadParentId) ?? null : null;
 
   return (
-    <div className={styles.panel} onClick={() => { if (showAddWorker) setShowAddWorker(false); }}>
+    <div className={styles.panelRoot} onClick={() => { if (showAddWorker) setShowAddWorker(false); }}>
+    <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.title}>Group</span>
         <span className={styles.groupName}>{group.name}</span>
@@ -600,18 +622,39 @@ export function GroupChatPanel() {
               </div>
             ) : null;
           }
+          const threadCount = (msg.threadMessages ?? []).filter((t) => t.role !== 'system').length;
+          const isActiveThread = msg.id === threadParentId;
           return (
-            <MessageBubble
+            <div
               key={msg.id}
-              role={msg.role === 'worker' ? 'assistant' : 'user'}
-              content={msg.content}
-              msgId={msg.msgId}
-              timestamp={msg.timestamp}
-              completedAt={msg.completedAt}
-              workerName={msg.role === 'worker' ? (msg.workerName ?? msg.workerId) : undefined}
-              workerId={msg.workerId}
-              workerColor={msg.role === 'worker' ? workerColor(msg.workerId ?? '', workerIds) : undefined}
-            />
+              className={`${styles.msgWrapper} ${isActiveThread ? styles.msgWrapperActive : ''}`}
+            >
+              <MessageBubble
+                role={msg.role === 'worker' ? 'assistant' : 'user'}
+                content={msg.content}
+                msgId={msg.msgId}
+                timestamp={msg.timestamp}
+                completedAt={msg.completedAt}
+                workerName={msg.role === 'worker' ? (msg.workerName ?? msg.workerId) : undefined}
+                workerId={msg.workerId}
+                workerColor={msg.role === 'worker' ? workerColor(msg.workerId ?? '', workerIds) : undefined}
+              />
+              <button
+                className={styles.replyBtn}
+                onClick={(e) => { e.stopPropagation(); setThreadParentId(msg.id); }}
+                title="回复到 Thread"
+              >
+                💬
+              </button>
+              {threadCount > 0 && (
+                <button
+                  className={styles.threadReplies}
+                  onClick={(e) => { e.stopPropagation(); setThreadParentId(msg.id); }}
+                >
+                  {threadCount} 条回复 →
+                </button>
+              )}
+            </div>
           );
         })}
         <div ref={bottomRef} />
@@ -697,6 +740,16 @@ export function GroupChatPanel() {
           void clearWorkerSessions(groupWorkers.map((w) => w.id), currentGroupId ?? undefined);
         }}
       />
+    </div>
+    {threadParentMsg && currentGroupId && (
+      <ThreadPanel
+        groupId={currentGroupId}
+        parentMsg={threadParentMsg}
+        groupWorkers={groupWorkers}
+        workerIds={workerIds}
+        onClose={() => setThreadParentId(null)}
+      />
+    )}
     </div>
   );
 }

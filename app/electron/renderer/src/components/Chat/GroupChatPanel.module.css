@@ -1,7 +1,15 @@
+.panelRoot {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  overflow: hidden;
+}
+
 .panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -604,4 +612,65 @@
   font-size: 11px;
   user-select: none;
   line-height: 1;
+}
+
+/* Thread support */
+.msgWrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.msgWrapper:hover .replyBtn,
+.msgWrapperActive .replyBtn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.replyBtn {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  line-height: 1.4;
+}
+
+.replyBtn:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.threadReplies {
+  align-self: flex-start;
+  margin-top: 4px;
+  margin-left: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #5b8cff;
+  background: #eef4ff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.threadReplies:hover {
+  background: #dbeafe;
+}
+
+.msgWrapperActive {
+  background: #f8faff;
+  border-radius: 8px;
+  padding: 4px;
+  margin: -4px;
 }

@@ -73,6 +73,9 @@ export function registerIpcHandlers(opts: {
     workers.saveSkillContent(workerId, skillId, content)
   );
   ipcMain.handle('workers:delete', (_evt, workerId: string) => workers.deleteWorker(workerId));
+  ipcMain.handle('workers:copy', (_evt, sourceId: string, newId: string, newName: string, newDescription: string) =>
+    workers.copyWorker(sourceId, newId, newName, newDescription)
+  );
   ipcMain.handle('groups:list', () => groups.listGroups());
   ipcMain.handle('groups:create', (_evt, name: string, workerIds: string[]) => groups.createGroup(name, workerIds));
   ipcMain.handle('groups:delete', (_evt, id: string) => groups.deleteGroup(id));

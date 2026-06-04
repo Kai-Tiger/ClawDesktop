@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('gatewayApi', {
     ipcRenderer.invoke('settings:setWorkerToolEnabled', workerId, toolId, enabled),
   applyWorkerImagePreset: (workerId: string, model?: string) => ipcRenderer.invoke('settings:applyWorkerImagePreset', workerId, model),
   workerDelete: (workerId: string) => ipcRenderer.invoke('workers:delete', workerId),
+  workerCopy: (sourceId: string, newId: string, newName: string, newDescription: string) =>
+    ipcRenderer.invoke('workers:copy', sourceId, newId, newName, newDescription),
   getChatHistory: () => ipcRenderer.invoke('chat:getHistory'),
   saveHistory: (data: unknown) => ipcRenderer.send('chat:saveHistory', data),
   saveChatImage: (msgId: string, dataUrl: string) => ipcRenderer.invoke('chat:saveImage', { msgId, dataUrl }),

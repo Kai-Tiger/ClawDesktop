@@ -67,6 +67,7 @@ interface GatewayApi {
   setWorkerToolEnabled: (workerId: string, toolId: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
   applyWorkerImagePreset: (workerId: string, model?: string) => Promise<{ ok: boolean; error?: string; model?: string }>;
   workerDelete: (workerId: string) => Promise<{ ok: boolean; error?: string }>;
+  workerCopy: (sourceId: string, newId: string, newName: string, newDescription: string) => Promise<{ ok: boolean; error?: string }>;
   getChatHistory: () => Promise<ChatHistory>;
   saveHistory: (data: ChatHistory) => void;
   saveChatImage: (msgId: string, dataUrl: string) => Promise<{ ok: boolean; canceled?: boolean; savedPath?: string; error?: string }>;
@@ -138,6 +139,8 @@ export const getWorkerTools = (workerId: string) => api().getWorkerTools(workerI
 export const setWorkerToolEnabled = (workerId: string, toolId: string, enabled: boolean) => api().setWorkerToolEnabled(workerId, toolId, enabled);
 export const applyWorkerImagePreset = (workerId: string, model?: string) => api().applyWorkerImagePreset(workerId, model);
 export const workerDelete = (workerId: string) => api().workerDelete(workerId);
+export const workerCopy = (sourceId: string, newId: string, newName: string, newDescription: string) =>
+  api().workerCopy(sourceId, newId, newName, newDescription);
 export const getChatHistory = () => api().getChatHistory();
 export const saveHistory = (data: ChatHistory) => api().saveHistory(data);
 export const saveChatImage = (msgId: string, dataUrl: string) => api().saveChatImage(msgId, dataUrl);

@@ -547,6 +547,62 @@ export class WorkerService {
     }
   }
 
+  async copyWorker(
+    sourceId: string, newId: string, newName: string, newDescription: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const srcDef = path.join(this.paths.userImportedWorkersRoot, sourceId);
+      if (!fs.existsSync(srcDef)) {
+        return { ok: false, error: '源 Worker 不存在或为内置 Worker，无法复制' };
+      }
+      const destDef = path.join(this.paths.userImportedWorkersRoot, newId);
+      if (fs.existsSync(destDef)) {
+        return { ok: false, error: `ID "${newId}" 已被占用` };
+      }
+
+      fs.cpSync(srcDef, destDef, { recursive: true });
+      fs.writeFileSync(
+        path.join(destDef, 'worker.json'),
+        JSON.stringify({ id: newId, name: newName, description: newDescription, mode: 'agent' }, null, 2),
+        'utf8'
+      );
+
+      await this.bootstrapWorkerAgent(
+        { id: newId, name: newName, description: newDescription, path: destDef, mode: 'agent' },
+        { forceSkills: true }
+      );
+      this.sessions.clearAgentSessionSnapshot(newId);
+
+      // Copy only skills from source workspace (not memories or session state)
+      const srcSkills = path.join(this.paths.workerAgentWorkspacePath(sourceId), 'skills');
+      const dstSkills = path.join(this.paths.workerAgentWorkspacePath(newId), 'skills');
+      if (fs.existsSync(srcSkills)) {
+        if (fs.existsSync(dstSkills)) fs.rmSync(dstSkills, { recursive: true, force: true });
+        fs.cpSync(srcSkills, dstSkills, { recursive: true });
+      }
+
+      try {
+        const configPath = path.join(this.paths.userOpenClawHome, '.openclaw', 'openclaw.json');
+        const raw = fs.existsSync(configPath)
+          ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+          : {};
+        raw.agents = raw.agents || {};
+        raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
+        const defaultModel = 'openrouter/xiaomi/mimo-v2-pro';
+        const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === newId);
+        if (idx < 0) {
+          raw.agents.list.push({ id: newId, model: defaultModel });
+        }
+        fs.writeFileSync(configPath, JSON.stringify(raw, null, 2), 'utf8');
+        this.ensureSubagentToolsDenied([newId]);
+      } catch { /* 写入失败不影响复制结果 */ }
+
+      return { ok: true };
+    } catch (err: unknown) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   async openFileDialog(): Promise<string | null> {
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return null;
@@ -601,12 +657,24 @@ export class WorkerService {
     fs.mkdirSync(dirPath, { recursive: true });
     return new Promise((resolve) => {
       let settled = false;
-      const augmentedPath = `/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:${process.env.PATH ?? ''}`;
-      const child = spawn('cursor', [dirPath], {
-        shell: true,
+      const env = { ...process.env };
+      // Remove Electron env vars that cause other Electron apps (like Cursor) to start in Node.js mode
+      delete env.ELECTRON_RUN_AS_NODE;
+      delete env.ELECTRON_NO_ATTACH_CONSOLE;
+      delete env.ELECTRON_IS_DEV;
+
+      // Resolve cursor binary directly to avoid shell: true splitting paths with spaces
+      const cursorCandidates = ['/usr/local/bin/cursor', '/opt/homebrew/bin/cursor'];
+      const cursorBin = cursorCandidates.find((p) => fs.existsSync(p));
+      if (!cursorBin) {
+        resolve({ ok: false, error: '未找到 cursor 命令行工具，请在 Cursor 中执行 "Install \'cursor\' command"' });
+        return;
+      }
+
+      const child = spawn(cursorBin, [dirPath], {
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env, PATH: augmentedPath },
+        env,
       });
       child.unref();
       child.on('error', (err) => {
@@ -618,14 +686,14 @@ export class WorkerService {
           if (code === 0 || code === null) {
             resolve({ ok: true });
           } else {
-            resolve({ ok: false, error: `Cursor 启动失败，请确认已安装 cursor 命令行工具 (exit ${code})` });
+            resolve({ ok: false, error: `Cursor 启动失败 (exit ${code})` });
           }
         }
       });
-      // fallback: if cursor detaches without closing the wrapper shell
+      // Cursor detaches quickly; resolve after short wait if no error
       setTimeout(() => {
         if (!settled) { settled = true; resolve({ ok: true }); }
-      }, 3000);
+      }, 2000);
     });
   }
 

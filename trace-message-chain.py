@@ -101,6 +101,27 @@ def find_in_chat_history(chat_history_path: str, message_id: str) -> Optional[Di
                     "assistant": msg,
                     "prev_user": None,
                 }
+            # Search inside threadMessages
+            for tidx, tmsg in enumerate(msg.get("threadMessages") or []):
+                if not isinstance(tmsg, dict):
+                    continue
+                if tmsg.get("id") == message_id or tmsg.get("msgId") == message_id:
+                    prev_user = None
+                    for j in range(tidx - 1, -1, -1):
+                        p = (msg.get("threadMessages") or [])[j]
+                        if isinstance(p, dict) and p.get("role") == "user":
+                            prev_user = p
+                            break
+                    return {
+                        "scope": "thread",
+                        "group_id": group_id,
+                        "parent_msg_id": msg.get("id"),
+                        "parent_msg": msg,
+                        "index": tidx,
+                        "assistant": tmsg,
+                        "prev_user": prev_user,
+                        "worker_id": tmsg.get("workerId"),
+                    }
 
     return None
 
@@ -1305,6 +1326,8 @@ def main() -> None:
     status_info = parse_metadata_from_logs(log_lines)
 
     worker_id = history_hit.get("worker_id")
+    if not worker_id and history_hit.get("scope") == "thread":
+        worker_id = history_hit["assistant"].get("workerId")
     if not worker_id and log_lines:
         worker_id = log_lines[0].get("worker")
     run_id = status_info.get("run_id")
@@ -1335,6 +1358,10 @@ def main() -> None:
         print(f"workerId: {worker_id}")
     if history_hit.get("group_id"):
         print(f"groupId: {history_hit.get('group_id')}")
+    if history_hit.get("scope") == "thread":
+        print(f"parentMsgId: {history_hit.get('parent_msg_id')}")
+        parent_msg = history_hit.get("parent_msg") or {}
+        print(f"parentMsgPreview: {short_text(str(parent_msg.get('content', '')))}")
     print(f"assistantTimestamp(ms): {assistant.get('timestamp')}")
     print(f"assistantPreview: {short_text(str(assistant.get('content', '')))}")
     if prev_user:

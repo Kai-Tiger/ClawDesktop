@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { WorkerMeta, ChatMessage, GroupChannel, GroupMessage, MessageContent } from '../types';
+import type { WorkerMeta, ChatMessage, GroupChannel, GroupMessage, ThreadMessage, MessageContent } from '../types';
 import { saveHistory } from '../api/gateway';
 
 const isThinkingContent = (content: MessageContent | string) =>
@@ -32,6 +32,8 @@ interface ChatStore {
   addGroupMessage: (groupId: string, msg: GroupMessage) => void;
   updateGroupMessage: (groupId: string, msgId: string, content: MessageContent, completedAt?: number) => void;
   clearGroupMessages: (groupId: string) => void;
+  addThreadMessage: (groupId: string, parentMsgId: string, msg: ThreadMessage) => void;
+  updateThreadMessage: (groupId: string, parentMsgId: string, threadMsgId: string, content: MessageContent, completedAt?: number) => void;
   toggleSidebar: () => void;
 }
 
@@ -132,6 +134,31 @@ export const useChatStore = create<ChatStore>((set) => ({
   clearGroupMessages: (groupId) =>
     set((state) => ({ groupMessages: { ...state.groupMessages, [groupId]: [] } })),
 
+  addThreadMessage: (groupId, parentMsgId, msg) =>
+    set((state) => {
+      const list = [...(state.groupMessages[groupId] ?? [])];
+      const idx = list.findIndex((m) => m.id === parentMsgId);
+      if (idx < 0) return {};
+      list[idx] = {
+        ...list[idx],
+        threadMessages: [...(list[idx].threadMessages ?? []), { ...msg, timestamp: msg.timestamp ?? Date.now() }],
+      };
+      return { groupMessages: { ...state.groupMessages, [groupId]: list } };
+    }),
+
+  updateThreadMessage: (groupId, parentMsgId, threadMsgId, content, completedAt) =>
+    set((state) => {
+      const list = [...(state.groupMessages[groupId] ?? [])];
+      const idx = list.findIndex((m) => m.id === parentMsgId);
+      if (idx < 0) return {};
+      const threads = [...(list[idx].threadMessages ?? [])];
+      const tIdx = threads.findIndex((t) => t.id === threadMsgId);
+      if (tIdx < 0) return {};
+      threads[tIdx] = { ...threads[tIdx], content, ...(completedAt !== undefined ? { completedAt } : {}) };
+      list[idx] = { ...list[idx], threadMessages: threads };
+      return { groupMessages: { ...state.groupMessages, [groupId]: list } };
+    }),
+
   toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
 }));
 
@@ -145,7 +172,12 @@ useChatStore.subscribe((state) => {
     }
     const filteredGroupMessages: Record<string, GroupMessage[]> = {};
     for (const [k, v] of Object.entries(state.groupMessages)) {
-      filteredGroupMessages[k] = v.filter((m) => !isThinkingContent(m.content));
+      filteredGroupMessages[k] = v
+        .filter((m) => !isThinkingContent(m.content))
+        .map((m) => ({
+          ...m,
+          threadMessages: m.threadMessages?.filter((t) => !isThinkingContent(t.content)),
+        }));
     }
     saveHistory({ messages: filteredMessages, groupMessages: filteredGroupMessages });
   }, 500);
