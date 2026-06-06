@@ -1,6 +1,12 @@
 # ClawDesktop
 
-面向技术团队的桌面多 Agent 编排工作台，支持跨 Worker 协作、Group Chat 流式对话与渠道自动化。
+ClawDesktop 是一个基于 [OpenClaw](https://github.com/openclaw) 的桌面客户端，内置完整的 OpenClaw 运行时，无需额外安装即可直接使用。
+
+OpenClaw 是一个多 Agent 编排框架，ClawDesktop 在此基础上提供了可视化界面，让你能够：
+
+- 通过 GUI **快速新建和管理 Worker**（每个 Worker 是一个独立的 AI Agent，拥有自己的记忆、技能和工具）
+- 在 **Group Chat** 中同时调度多个 Worker 协作，完成复杂任务
+- 与 Worker 进行流式对话，实时查看 AI 的推理过程
 
 ---
 
