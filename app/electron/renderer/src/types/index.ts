@@ -12,6 +12,7 @@ export type ContentBlock =
 export type MessageContent = string | ContentBlock[];
 
 export interface ChatMessage {
+  id?: string;
   role: Role;
   content: MessageContent;
   timestamp?: number;

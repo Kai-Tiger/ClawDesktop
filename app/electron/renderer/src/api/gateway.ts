@@ -76,7 +76,7 @@ interface GatewayApi {
   coordinatorGetModel: () => Promise<string>;
   coordinatorSetModel: (model: string) => Promise<{ ok: boolean; error?: string }>;
   coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) => Promise<string>;
-  onChatChunk: (cb: (data: { workerId: string; chunk: string }) => void) => () => void;
+  onChatChunk: (cb: (data: { workerId: string; chunk: string; groupId?: string | null; msgId?: string | null }) => void) => () => void;
   onCronMessage?: (cb: (data: { workerId: string; content: string; role: string }) => void) => () => void;
   mobileConnectionInfo: () => Promise<{ ip: string; port: number; token: string; running: boolean }>;
   openExternal: (url: string) => Promise<void>;
@@ -150,7 +150,7 @@ export const coordinatorGetModel = () => api().coordinatorGetModel();
 export const coordinatorSetModel = (model: string) => api().coordinatorSetModel(model);
 export const coordinatorPlan = (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) =>
   api().coordinatorPlan(payload);
-export const onChatChunk = (cb: (data: { workerId: string; chunk: string }) => void) =>
+export const onChatChunk = (cb: (data: { workerId: string; chunk: string; groupId?: string | null; msgId?: string | null }) => void) =>
   api().onChatChunk(cb);
 export const onCronMessage = (cb: (data: { workerId: string; content: string; role: string }) => void) =>
   api().onCronMessage?.(cb) ?? (() => {});

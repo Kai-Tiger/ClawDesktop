@@ -690,7 +690,8 @@ export class ChatService {
     history: MessageItem[],
     onLog?: (step: string) => void,
     traceId?: string,
-    groupId?: string
+    groupId?: string,
+    workerId?: string
   ): Promise<MessageContent> {
     const userContent: MessageContent = images.length === 0
       ? message
@@ -773,7 +774,7 @@ export class ChatService {
       res = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ model: gatewayModel, messages }),
+        body: JSON.stringify({ model: gatewayModel, messages, stream: true }),
         signal: ctrl.signal,
       });
     } catch (err) {
@@ -795,32 +796,78 @@ export class ChatService {
       throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     }
 
-    const json = await res.json() as unknown;
-    const runtimeUsageRecord = this.buildRuntimeUsageByTraceRecord({
-      traceId,
-      gatewayModel,
-      configuredModel,
-      message,
-      historyCount: history.length,
-      imageCount: images.length,
-      responseJson: json,
-    });
-    this.paths.writeGatewayRuntimeUsageByTrace(runtimeUsageRecord, traceId);
-    onLog?.(`resp shape ${this.summarizeResponseShape(json)}`);
-    const content = await this.extractReplyContent(json);
-    const text = this.summarizeMessageContent(content) || '(无回复内容)';
-    onLog?.(`reply len=${text.length}`);
-    if (traceId) {
-      const sessionRows = this.buildHttpSessionJsonlRows({ history, message, images, assistantContent: content || '(无回复内容)', responseJson: json, traceId });
-      this.paths.writeHttpSessionJsonl(traceId, sessionRows);
+    const contentType = res.headers.get('content-type') ?? '';
+    const isSSE = contentType.includes('text/event-stream');
+    onLog?.(`resp content-type=${contentType} sse=${isSSE}`);
+
+    let replyContent: MessageContent;
+
+    if (isSSE) {
+      const win = BrowserWindow.getAllWindows()[0];
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = '';
+      let sseBuffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split('\n');
+          sseBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') break;
+            try {
+              const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+              const chunk = parsed.choices?.[0]?.delta?.content;
+              if (chunk) {
+                accumulated += chunk;
+                if (win && !win.isDestroyed() && workerId) {
+                  win.webContents.send('chat:chunk', { workerId, chunk, groupId: groupId ?? null, msgId: traceId ?? null });
+                }
+              }
+            } catch { /* ignore malformed SSE lines */ }
+          }
+        }
+      } finally {
+        reader.cancel().catch(() => {});
+      }
+
+      replyContent = accumulated || '(无回复内容)';
+    } else {
+      const json = await res.json() as unknown;
+      const runtimeUsageRecord = this.buildRuntimeUsageByTraceRecord({
+        traceId,
+        gatewayModel,
+        configuredModel,
+        message,
+        historyCount: history.length,
+        imageCount: images.length,
+        responseJson: json,
+      });
+      this.paths.writeGatewayRuntimeUsageByTrace(runtimeUsageRecord, traceId);
+      onLog?.(`resp shape ${this.summarizeResponseShape(json)}`);
+      const content = await this.extractReplyContent(json);
+      const text = this.summarizeMessageContent(content) || '(无回复内容)';
+      onLog?.(`reply len=${text.length}`);
+      if (traceId) {
+        const sessionRows = this.buildHttpSessionJsonlRows({ history, message, images, assistantContent: content || '(无回复内容)', responseJson: json, traceId });
+        this.paths.writeHttpSessionJsonl(traceId, sessionRows);
+      }
+      replyContent = content || '(无回复内容)';
     }
+
+    onLog?.(`reply len=${typeof replyContent === 'string' ? replyContent.length : replyContent.length}`);
     if (workerIdFromModel) {
       const epoch = groupId ? this.sessions.getGroupSessionEpoch(workerIdFromModel, groupId) : 0;
       const sessionSuffix = groupId ? `g${groupId.slice(-8)}-e${epoch}` : 'main';
       const sessionKey = `agent:${workerIdFromModel}:${sessionSuffix}`;
       setImmediate(() => this.sessions.compactAgentSession(workerIdFromModel!, sessionKey));
     }
-    return content || '(无回复内容)';
+    return replyContent;
   }
 
   private chatCliAgent(
@@ -1083,7 +1130,8 @@ export class ChatService {
           history ?? [],
           (step) => log(`HTTP ${step}`),
           traceId,
-          groupId
+          groupId,
+          selected.id
         );
         const replyText = this.summarizeMessageContent(reply) || '(无回复内容)';
         log(`DONE reply-len=${replyText.length} total=${Date.now() - t0}ms`);
@@ -1123,7 +1171,8 @@ export class ChatService {
           history ?? [],
           (step) => log(`HTTP ${step}`),
           traceId,
-          groupId
+          groupId,
+          selected.id
         );
         const replyText = this.summarizeMessageContent(reply) || '(无回复内容)';
         log(`DONE reply-len=${replyText.length} total=${Date.now() - t0}ms`);

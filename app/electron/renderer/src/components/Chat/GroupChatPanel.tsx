@@ -8,6 +8,7 @@ import type { GroupMessage, WorkerMeta, CoordinatorPlan, MessageContent, Content
 import styles from './GroupChatPanel.module.css';
 
 const PALETTE = ['#5b8cff', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+const EMPTY_GROUP_MESSAGES: GroupMessage[] = [];
 
 function workerColor(workerId: string, allIds: string[]) {
   return PALETTE[Math.max(0, allIds.indexOf(workerId)) % PALETTE.length];
@@ -88,17 +89,21 @@ function stripImages(content: MessageContent): MessageContent {
 export function GroupChatPanel() {
   const groups = useChatStore((s) => s.groups);
   const currentGroupId = useChatStore((s) => s.currentGroupId);
+  // Subscribe directly to the current group's message array so Zustand detects
+  // nested updates (e.g. updateThreadMessage) and triggers a re-render.
+  const messages = useChatStore(
+    (s) => (s.currentGroupId ? s.groupMessages[s.currentGroupId] : undefined) ?? EMPTY_GROUP_MESSAGES
+  ) as GroupMessage[];
   const groupMessages = useChatStore((s) => s.groupMessages);
   const addGroupMessage = useChatStore((s) => s.addGroupMessage);
   const addThreadMessage = useChatStore((s) => s.addThreadMessage);
+  const deleteGroupMessage = useChatStore((s) => s.deleteGroupMessage);
   const allWorkers = useChatStore((s) => s.workers);
 
   const group = groups.find((g) => g.id === currentGroupId);
   const groupWorkers = (group?.workerIds ?? [])
     .map((id) => allWorkers.find((w) => w.id === id))
     .filter(Boolean) as WorkerMeta[];
-
-  const messages: GroupMessage[] = currentGroupId ? (groupMessages[currentGroupId] ?? []) : [];
 
   const [noTarget, setNoTarget] = useState(false);
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
@@ -638,6 +643,7 @@ export function GroupChatPanel() {
                 workerName={msg.role === 'worker' ? (msg.workerName ?? msg.workerId) : undefined}
                 workerId={msg.workerId}
                 workerColor={msg.role === 'worker' ? workerColor(msg.workerId ?? '', workerIds) : undefined}
+                onDelete={() => currentGroupId && deleteGroupMessage(currentGroupId, msg.id)}
               />
               <button
                 className={styles.replyBtn}

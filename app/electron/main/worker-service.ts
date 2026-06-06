@@ -525,7 +525,7 @@ export class WorkerService {
           : {};
         raw.agents = raw.agents || {};
         raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
-        const defaultModel = 'openrouter/xiaomi/mimo-v2-pro';
+        const defaultModel = 'openrouter/xiaomi/mimo-v2.5-pro';
         const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === id);
         if (idx >= 0) {
           if (!raw.agents.list[idx].model) {
@@ -588,7 +588,7 @@ export class WorkerService {
           : {};
         raw.agents = raw.agents || {};
         raw.agents.list = Array.isArray(raw.agents.list) ? raw.agents.list : [];
-        const defaultModel = 'openrouter/xiaomi/mimo-v2-pro';
+        const defaultModel = 'openrouter/xiaomi/mimo-v2.5-pro';
         const idx = raw.agents.list.findIndex((a: { id?: string }) => a?.id === newId);
         if (idx < 0) {
           raw.agents.list.push({ id: newId, model: defaultModel });

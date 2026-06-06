@@ -15,14 +15,17 @@ import styles from "./WorkerSettingsDialog.module.css";
 
 const IMAGE_MODELS = [
   { id: "openai/gpt-5.4-image-2", label: "GPT-5.4 Image 2" },
-  { id: "google/gemini-3.1-flash-image-preview", label: "Gemini 3.1 Flash Image" },
+  {
+    id: "google/gemini-3.1-flash-image-preview",
+    label: "Gemini 3.1 Flash Image",
+  },
 ];
 
 const IMAGE_MODEL_IDS = new Set(IMAGE_MODELS.map((m) => m.id));
 
 const BUILTIN_MODELS = [
   { id: "minimax/minimax-m2.5", label: "MiniMax M2.5" },
-  { id: "xiaomi/mimo-v2-pro", label: "MiMo v2 Pro" },
+  { id: "xiaomi/mimo-v2.5-pro", label: "MiMo v2.5 Pro" },
   { id: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
   { id: "openai/gpt-5-nano", label: "GPT-5 Nano" },
   { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
@@ -186,7 +189,9 @@ export function WorkerSettingsDialog({
   const [customInput, setCustomInput] = useState("");
   const [toolsLoading, setToolsLoading] = useState(false);
   const [toolSaving, setToolSaving] = useState<Record<string, boolean>>({});
-  const [toolItems, setToolItems] = useState<Array<{ id: string; enabled: boolean }>>([]);
+  const [toolItems, setToolItems] = useState<
+    Array<{ id: string; enabled: boolean }>
+  >([]);
 
   const loadBots = async () => {
     setRefreshing(true);
@@ -207,12 +212,12 @@ export function WorkerSettingsDialog({
   const loadModel = async () => {
     try {
       const m = await getWorkerModel(workerId);
-      const model = m || "xiaomi/mimo-v2-pro";
+      const model = m || "xiaomi/mimo-v2.5-pro";
       setModelCurrent(model);
       setModelSelected(model);
     } catch {
-      setModelCurrent("xiaomi/mimo-v2-pro");
-      setModelSelected("xiaomi/mimo-v2-pro");
+      setModelCurrent("xiaomi/mimo-v2.5-pro");
+      setModelSelected("xiaomi/mimo-v2.5-pro");
     }
   };
 
@@ -250,7 +255,7 @@ export function WorkerSettingsDialog({
     const updated = customModels.filter((m) => m.id !== id);
     setCustomModels(updated);
     localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(updated));
-    if (modelSelected === id) setModelSelected("xiaomi/mimo-v2-pro");
+    if (modelSelected === id) setModelSelected("xiaomi/mimo-v2.5-pro");
   };
 
   useEffect(() => {
@@ -368,7 +373,9 @@ export function WorkerSettingsDialog({
     if (!workerId || toolSaving[toolId]) return;
     setToolSaving((prev) => ({ ...prev, [toolId]: true }));
     const prevItems = toolItems;
-    setToolItems((prev) => prev.map((item) => (item.id === toolId ? { ...item, enabled } : item)));
+    setToolItems((prev) =>
+      prev.map((item) => (item.id === toolId ? { ...item, enabled } : item)),
+    );
     try {
       const res = await setWorkerToolEnabled(workerId, toolId, enabled);
       if (!res.ok) {
@@ -379,7 +386,9 @@ export function WorkerSettingsDialog({
       setStatus(`工具 ${toolId} 已${enabled ? "开启" : "关闭"}`);
     } catch (err: unknown) {
       setToolItems(prevItems);
-      setStatus(`更新工具失败: ${err instanceof Error ? err.message : String(err)}`);
+      setStatus(
+        `更新工具失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setToolSaving((prev) => ({ ...prev, [toolId]: false }));
     }
@@ -561,7 +570,9 @@ export function WorkerSettingsDialog({
         </div>
 
         <div className={styles.section}>
-          <div className={styles.label}>工具能力开关（影响底层 Agent 可调用工具）</div>
+          <div className={styles.label}>
+            工具能力开关（影响底层 Agent 可调用工具）
+          </div>
           {toolsLoading ? (
             <div className={styles.empty}>加载中…</div>
           ) : toolItems.length === 0 ? (
@@ -581,9 +592,11 @@ export function WorkerSettingsDialog({
                       <span className={styles.infoIcon} tabIndex={0}>
                         i
                         <span className={styles.tooltip}>
-                          <strong>用途：</strong>{meta.purpose}
+                          <strong>用途：</strong>
+                          {meta.purpose}
                           <br />
-                          <strong>关闭影响：</strong>{meta.impact}
+                          <strong>关闭影响：</strong>
+                          {meta.impact}
                         </span>
                       </span>
                     </span>
@@ -593,7 +606,9 @@ export function WorkerSettingsDialog({
                         className={styles.switchInput}
                         checked={tool.enabled}
                         disabled={savingNow}
-                        onChange={(e) => void handleToggleTool(tool.id, e.target.checked)}
+                        onChange={(e) =>
+                          void handleToggleTool(tool.id, e.target.checked)
+                        }
                       />
                       <span className={styles.switchSlider} />
                     </span>

@@ -5,6 +5,7 @@
 **需求**：在 `WorkerSettingsDialog.tsx` 的 `MODELS` 列表中新增三个模型。
 
 **新增内容**：
+
 - `moonshotai/kimi-k2.6` — Kimi K2.6
 - `anthropic/claude-sonnet-4.6` — Claude Sonnet 4.6
 - `google/gemini-3-flash-preview` — Gemini 3 Flash Preview
@@ -16,6 +17,7 @@
 **需求**：用户可以手动输入 OpenRouter 上的模型 ID 并添加到列表。
 
 **实现方案**：
+
 - 将内置模型常量重命名为 `BUILTIN_MODELS`
 - 自定义模型存储在 `localStorage`（key: `openclaw_custom_models`），页面刷新后保留
 - 下拉框用 `<optgroup>` 分组，分为「内置模型」和「自定义模型」
@@ -26,7 +28,7 @@
 
 ## 3. Worker 默认模型改为 mimo-v2-pro
 
-**需求**：将 worker 的默认模型从 `BUILTIN_MODELS[0]`（MiniMax M2.5）改为 `xiaomi/mimo-v2-pro`。
+**需求**：将 worker 的默认模型从 `BUILTIN_MODELS[0]`（MiniMax M2.5）改为 `xiaomi/mimo-v2.5-pro`。
 
 **修改位置**：`WorkerSettingsDialog.tsx` 中 `loadModel` 的 fallback 值，以及移除自定义模型时的回退值。
 
@@ -58,11 +60,11 @@
 
 Worker 发送消息的路由逻辑（`main/index.ts`）：
 
-| mode | 文本路径 | 能拿到 token？ |
-|------|----------|--------------|
-| 默认 | HTTP → CLI 兜底 | ○ 正常 / × 兜底时 |
-| `agent` | CLI | × |
-| `agent` + 图片 | HTTP | ○ |
+| mode           | 文本路径        | 能拿到 token？    |
+| -------------- | --------------- | ----------------- |
+| 默认           | HTTP → CLI 兜底 | ○ 正常 / × 兜底时 |
+| `agent`        | CLI             | ×                 |
+| `agent` + 图片 | HTTP            | ○                 |
 
 用户使用的都是 zip 包导入的 worker（`mode === 'agent'`），全部走 CLI 模式，CLI 输出没有结构化的 usage 数据，**该功能无法实现，已放弃**。
 
@@ -71,6 +73,7 @@ Worker 发送消息的路由逻辑（`main/index.ts`）：
 ## 7. CLI 模式 vs HTTP 模式
 
 **CLI 模式（`mode === 'agent'`）的优势**：
+
 - **持久 Session**：每个 worker 有固定 `session-id`，跨对话保留上下文，无需每次传完整历史
 - **独立 Workspace**：每个 worker 有自己的工作目录（`workspace-{workerId}`），可存文件、配置、状态
 - **Skills 系统**：workspace 下有 `skills/` 目录，worker 随 zip 包携带自己的工具能力
@@ -96,4 +99,4 @@ HTTP 模式每次请求都现读 SOUL.md，改了立即生效。
 
 **根因**：`installWorkerFromTemp` 导入流程只写 `worker.json`，从不在 `openclaw.json` 里给新 worker 设置 model。`getWorkerModel` 找不到 worker 专属 model 就回退到全局默认（`agents.defaults.model`），即 `gpt-5-nano`。
 
-**修复**：在 `installWorkerFromTemp` 完成后，直接将 `openrouter/xiaomi/mimo-v2-pro` 写入 `openclaw.json` 的 `agents.list`。逻辑：若该 worker 已有 model（重新导入时）则不覆盖，若是新 worker 或无 model 则写入默认值。
+**修复**：在 `installWorkerFromTemp` 完成后，直接将 `openrouter/xiaomi/mimo-v2.5-pro` 写入 `openclaw.json` 的 `agents.list`。逻辑：若该 worker 已有 model（重新导入时）则不覆盖，若是新 worker 或无 model 则写入默认值。

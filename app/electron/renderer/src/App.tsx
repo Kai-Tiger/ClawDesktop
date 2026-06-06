@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useWorkers } from './hooks/useWorkers';
 import { useGroups } from './hooks/useGroups';
 import { useChatStore } from './store/chatStore';
-import { onCronMessage } from './api/gateway';
+import { onCronMessage, onChatChunk } from './api/gateway';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { ChatPanel } from './components/Chat/ChatPanel';
 import { GroupChatPanel } from './components/Chat/GroupChatPanel';
@@ -20,6 +20,16 @@ export function App() {
       useChatStore.getState().pushMessage(workerId, { role: (role as 'assistant' | 'user') || 'assistant', content });
     });
     return off;
+  }, []);
+
+  useEffect(() => {
+    return onChatChunk(({ workerId, chunk, groupId, msgId }) => {
+      if (groupId) {
+        useChatStore.getState().appendGroupChunk(groupId, workerId, chunk, msgId);
+      } else {
+        useChatStore.getState().appendToLastMessage(workerId, chunk);
+      }
+    });
   }, []);
 
   return (

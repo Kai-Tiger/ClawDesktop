@@ -7,6 +7,8 @@ export function MessageList() {
   const currentWorkerId = useChatStore((s) => s.currentWorkerId);
   const messagesMap = useChatStore((s) => s.messages);
   const workers = useChatStore((s) => s.workers);
+  const deleteMessage = useChatStore((s) => s.deleteMessage);
+  const isSending = useChatStore((s) => s.sending[s.currentWorkerId] ?? false);
   const [progressCollapsed, setProgressCollapsed] = useState(true);
   const messages = messagesMap[currentWorkerId] ?? [];
   const progressMessages = messages.filter(
@@ -65,6 +67,8 @@ export function MessageList() {
               {...msg}
               workerName={workerName}
               workerId={currentWorkerId}
+              onDelete={() => msg.id && deleteMessage(currentWorkerId, msg.id)}
+              isStreaming={isSending && msg.role === 'assistant' && i === normalMessages.length - 1}
             />
           )}
         </div>

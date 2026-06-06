@@ -83,12 +83,12 @@ interface ThreadPanelProps {
 
 export function ThreadPanel({ groupId, parentMsg, groupWorkers, workerIds, onClose }: ThreadPanelProps) {
   const addThreadMessage = useChatStore((s) => s.addThreadMessage);
-  // Selector must NOT return a new [] fallback — that causes an infinite re-render loop
-  // because Zustand uses Object.is and a new [] is never === another new [].
-  const rawThreadMessages = useChatStore(
-    (s) => s.groupMessages[groupId]?.find((m) => m.id === parentMsg.id)?.threadMessages
-  );
-  const threadMessages = rawThreadMessages ?? [];
+  const deleteGroupMessage = useChatStore((s) => s.deleteGroupMessage);
+  const deleteThreadMessage = useChatStore((s) => s.deleteThreadMessage);
+  // Derive directly from parentMsg prop — GroupChatPanel subscribes to groupMessages
+  // and passes down an updated parentMsg whenever updateThreadMessage fires, so this
+  // is always in sync without the inline-selector closure-capture issue.
+  const threadMessages = parentMsg.threadMessages ?? [];
 
   const [noTarget, setNoTarget] = useState(false);
   const [panelWidth, setPanelWidth] = useState(360);
@@ -226,6 +226,7 @@ export function ThreadPanel({ groupId, parentMsg, groupWorkers, workerIds, onClo
             workerName={parentMsg.role === 'worker' ? (parentMsg.workerName ?? parentMsg.workerId) : undefined}
             workerId={parentMsg.workerId}
             workerColor={parentMsg.role === 'worker' ? workerColor(parentMsg.workerId ?? '', workerIds) : undefined}
+            onDelete={() => deleteGroupMessage(groupId, parentMsg.id)}
           />
           {threadMessages.length > 0 && (
             <div className={styles.replyCountLine}>
@@ -252,6 +253,8 @@ export function ThreadPanel({ groupId, parentMsg, groupWorkers, workerIds, onClo
               workerName={msg.role === 'worker' ? (msg.workerName ?? msg.workerId) : undefined}
               workerId={msg.workerId}
               workerColor={msg.role === 'worker' ? workerColor(msg.workerId ?? '', workerIds) : undefined}
+              onDelete={() => deleteThreadMessage(groupId, parentMsg.id, msg.id)}
+              isStreaming={!msg.completedAt && !isThinkingContent(msg.content)}
             />
           );
         })}

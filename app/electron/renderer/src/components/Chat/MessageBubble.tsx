@@ -10,6 +10,7 @@ import {
   workerOpenFileLocation,
   openExternal,
 } from "../../api/gateway";
+import { MessageContextMenu } from "./MessageContextMenu";
 
 const FILE_BLOCK_DISPLAY_LINES = 10;
 
@@ -246,6 +247,8 @@ interface MessageBubbleProps extends ChatMessage {
   workerName?: string;
   workerId?: string;
   workerColor?: string;
+  onDelete?: () => void;
+  isStreaming?: boolean;
 }
 
 export function MessageBubble({
@@ -257,6 +260,8 @@ export function MessageBubble({
   workerId,
   workerColor,
   msgId,
+  onDelete,
+  isStreaming,
 }: MessageBubbleProps) {
   const isUser = role === "user";
   const [isTraceModalOpen, setIsTraceModalOpen] = React.useState(false);
@@ -267,6 +272,19 @@ export function MessageBubble({
     width: number;
     height: number;
   } | null>(null);
+  const [contextMenu, setContextMenu] = React.useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const handleContextMenu = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setContextMenu({ x: e.clientX, y: e.clientY });
+    },
+    [],
+  );
 
   const openImagePreview = React.useCallback(
     (src: string, width: number, height: number) => {
@@ -416,6 +434,7 @@ export function MessageBubble({
   return (
     <div
       className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      onContextMenu={handleContextMenu}
     >
       <div className="mb-1 flex items-center gap-1.5 text-[11px] opacity-50">
         <span style={workerColor ? { color: workerColor, fontWeight: 500 } : undefined}>{displayName}</span>
@@ -425,7 +444,10 @@ export function MessageBubble({
         <div
           className={`max-w-[85%] break-words rounded-xl px-3 py-[9px] text-sm leading-6 ${isUser ? "rounded-br border border-blue-500 bg-blue-500 text-white" : "rounded-bl border border-gray-200 bg-gray-100 text-gray-900"} ${isThinking ? "animate-pulse italic" : ""}`}
         >
-          {renderMarkdown(truncateFileBlocks(content))}
+          {isStreaming
+            ? <span className="whitespace-pre-wrap">{content}{!isThinking && <span className="animate-pulse">▍</span>}</span>
+            : renderMarkdown(truncateFileBlocks(content))
+          }
           {role === "assistant" && msgId && (
             <div className="mt-1.5 flex items-center gap-1 text-[10px] font-mono text-gray-400">
               <button
@@ -542,6 +564,15 @@ export function MessageBubble({
             />
           </div>
         </div>
+      )}
+      {contextMenu && (
+        <MessageContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          onDelete={() => { onDelete?.(); }}
+          onFavorite={() => {}}
+        />
       )}
       {isTraceModalOpen && (
         <div

@@ -357,7 +357,7 @@ export class ConfigService {
     ]);
     const detail = await this.paths.runOpenClaw(['config', 'set', '--batch-json', batchJson]);
 
-    const modelDetail = await this.paths.runOpenClaw(['config', 'set', 'agents.defaults.model', 'openrouter/xiaomi/mimo-v2-pro']);
+    const modelDetail = await this.paths.runOpenClaw(['config', 'set', 'agents.defaults.model', 'openrouter/xiaomi/mimo-v2.5-pro']);
 
     return {
       ok: detail.code === 0 && modelDetail.code === 0,

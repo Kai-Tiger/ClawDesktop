@@ -24,6 +24,7 @@ extraResources:
       - "!**/.git/**"
       - "!**/package-lock.json"
 mac:
+  icon: build/icon.icns
   target:
     - dmg
   category: public.app-category.productivity

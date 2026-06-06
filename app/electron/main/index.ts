@@ -98,8 +98,9 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1440,
+    height: 900,
+    icon: path.join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js')
     }
@@ -115,7 +116,12 @@ function createWindow() {
 
 app.on('before-quit', () => { gateway.stopGatewayWsClient(); gateway.stopGateway(); mobileBridge.stop(); });
 
+app.setName('ClawDesktop');
+
 app.whenReady().then(async () => {
+  if (app.dock) {
+    app.dock.setIcon(path.join(__dirname, '../../build/icon.png'));
+  }
   try {
     await bootstrap();
   } catch (error) {

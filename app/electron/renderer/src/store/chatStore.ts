@@ -5,6 +5,10 @@ import { saveHistory } from '../api/gateway';
 const isThinkingContent = (content: MessageContent | string) =>
   typeof content === 'string' && (content === '思考中…' || content === '思考中...');
 
+function genMsgId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 interface ChatStore {
   workers: WorkerMeta[];
   currentWorkerId: string;
@@ -24,6 +28,7 @@ interface ChatStore {
   updateLastMessage: (workerId: string, content: MessageContent) => void;
   updateMessageById: (workerId: string, msgId: string, content: MessageContent) => void;
   appendToLastMessage: (workerId: string, chunk: string) => void;
+  appendGroupChunk: (groupId: string, workerId: string, chunk: string, msgId?: string | null) => void;
   setSending: (workerId: string, value: boolean) => void;
   clearMessages: (workerId: string) => void;
 
@@ -34,6 +39,9 @@ interface ChatStore {
   clearGroupMessages: (groupId: string) => void;
   addThreadMessage: (groupId: string, parentMsgId: string, msg: ThreadMessage) => void;
   updateThreadMessage: (groupId: string, parentMsgId: string, threadMsgId: string, content: MessageContent, completedAt?: number) => void;
+  deleteMessage: (workerId: string, id: string) => void;
+  deleteGroupMessage: (groupId: string, id: string) => void;
+  deleteThreadMessage: (groupId: string, parentMsgId: string, threadMsgId: string) => void;
   toggleSidebar: () => void;
 }
 
@@ -70,7 +78,7 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((state) => ({
       messages: {
         ...state.messages,
-        [workerId]: [...(state.messages[workerId] ?? []), { ...msg, timestamp: msg.timestamp ?? Date.now() }],
+        [workerId]: [...(state.messages[workerId] ?? []), { id: genMsgId(), ...msg, timestamp: msg.timestamp ?? Date.now() }],
       },
     })),
 
@@ -98,6 +106,55 @@ export const useChatStore = create<ChatStore>((set) => ({
       const base = isThinkingContent(last.content) || typeof last.content !== 'string' ? '' : last.content;
       list[list.length - 1] = { ...last, content: base + chunk };
       return { messages: { ...state.messages, [workerId]: list } };
+    }),
+
+  appendGroupChunk: (groupId, workerId, chunk, msgId) =>
+    set((state) => {
+      const msgs = [...(state.groupMessages[groupId] ?? [])];
+
+      const appendTo = (content: MessageContent): string =>
+        isThinkingContent(content) || typeof content !== 'string' ? chunk : content + chunk;
+
+      // When msgId is known, find the exact message by msgId (main or thread)
+      if (msgId) {
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'worker' && msgs[i].msgId === msgId) {
+            msgs[i] = { ...msgs[i], content: appendTo(msgs[i].content) };
+            return { groupMessages: { ...state.groupMessages, [groupId]: msgs } };
+          }
+          const threads = [...(msgs[i].threadMessages ?? [])];
+          let tIdx = -1;
+          for (let j = threads.length - 1; j >= 0; j--) {
+            if (threads[j].msgId === msgId) { tIdx = j; break; }
+          }
+          if (tIdx >= 0) {
+            threads[tIdx] = { ...threads[tIdx], content: appendTo(threads[tIdx].content) };
+            msgs[i] = { ...msgs[i], threadMessages: threads };
+            return { groupMessages: { ...state.groupMessages, [groupId]: msgs } };
+          }
+        }
+      }
+
+      // Fallback: search by workerId + no completedAt
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i];
+        if (msg.role === 'worker' && msg.workerId === workerId && !msg.completedAt) {
+          msgs[i] = { ...msg, content: appendTo(msg.content) };
+          return { groupMessages: { ...state.groupMessages, [groupId]: msgs } };
+        }
+      }
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const threads = [...(msgs[i].threadMessages ?? [])];
+        for (let j = threads.length - 1; j >= 0; j--) {
+          const t = threads[j];
+          if (t.role === 'worker' && t.workerId === workerId && !t.completedAt) {
+            threads[j] = { ...t, content: appendTo(t.content) };
+            msgs[i] = { ...msgs[i], threadMessages: threads };
+            return { groupMessages: { ...state.groupMessages, [groupId]: msgs } };
+          }
+        }
+      }
+      return {};
     }),
 
   setSending: (workerId, value) =>
@@ -158,6 +215,34 @@ export const useChatStore = create<ChatStore>((set) => ({
       list[idx] = { ...list[idx], threadMessages: threads };
       return { groupMessages: { ...state.groupMessages, [groupId]: list } };
     }),
+
+  deleteMessage: (workerId, id) =>
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [workerId]: (state.messages[workerId] ?? []).filter((m) => m.id !== id),
+      },
+    })),
+
+  deleteGroupMessage: (groupId, id) =>
+    set((state) => ({
+      groupMessages: {
+        ...state.groupMessages,
+        [groupId]: (state.groupMessages[groupId] ?? []).filter((m) => m.id !== id),
+      },
+    })),
+
+  deleteThreadMessage: (groupId, parentMsgId, threadMsgId) =>
+    set((state) => ({
+      groupMessages: {
+        ...state.groupMessages,
+        [groupId]: (state.groupMessages[groupId] ?? []).map((m) =>
+          m.id === parentMsgId
+            ? { ...m, threadMessages: (m.threadMessages ?? []).filter((t) => t.id !== threadMsgId) }
+            : m,
+        ),
+      },
+    })),
 
   toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
 }));

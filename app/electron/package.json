@@ -18,7 +18,8 @@
     "dist:mac:x64:zip": "electron-builder --mac zip --x64 --config electron-builder-x64.yml",
     "mac": "rm -rf dist/renderer && npm run build && npm run dist:mac:zip",
     "mac:x64": "rm -rf dist/renderer && npm run build && npm run dist:mac:x64:zip",
-    "dist:mac:dir": "electron-builder --mac dir"
+    "dist:mac:dir": "electron-builder --mac dir",
+    "postinstall": "node scripts/patch-electron-name.js || true"
   },
   "dependencies": {
     "electron-log": "^5.2.4",

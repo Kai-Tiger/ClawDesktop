@@ -72,8 +72,8 @@ contextBridge.exposeInMainWorld('gatewayApi', {
   coordinatorSetModel: (model: string) => ipcRenderer.invoke('coordinator:setModel', model),
   coordinatorPlan: (payload: { userMessage: string; workers: { id: string; name: string; description?: string }[]; fileContext?: string }) =>
     ipcRenderer.invoke('coordinator:plan', payload),
-  onChatChunk: (cb: (data: { workerId: string; chunk: string }) => void) => {
-    const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; chunk: string }) => cb(data);
+  onChatChunk: (cb: (data: { workerId: string; chunk: string; groupId?: string | null; msgId?: string | null }) => void) => {
+    const handler = (_evt: Electron.IpcRendererEvent, data: { workerId: string; chunk: string; groupId?: string | null; msgId?: string | null }) => cb(data);
     ipcRenderer.on('chat:chunk', handler);
     return () => ipcRenderer.removeListener('chat:chunk', handler);
   },
