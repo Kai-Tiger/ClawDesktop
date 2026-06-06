@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom";
+import { Star, Trash2 } from "lucide-react";
 import styles from "./MessageContextMenu.module.css";
 
 interface MessageContextMenuProps {
@@ -70,7 +71,7 @@ export function MessageContextMenu({
         className={styles.item}
         onClick={handleFavorite}
       >
-        <span className={styles.icon}>⭐</span>
+        <Star size={14} />
         收藏
       </button>
       <div className={styles.divider} />
@@ -79,7 +80,7 @@ export function MessageContextMenu({
         className={`${styles.item} ${styles.danger}`}
         onClick={handleDelete}
       >
-        <span className={styles.icon}>🗑️</span>
+        <Trash2 size={14} />
         删除
       </button>
     </div>,

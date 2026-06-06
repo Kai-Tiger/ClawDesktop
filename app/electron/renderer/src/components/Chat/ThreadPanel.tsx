@@ -1,11 +1,13 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { X } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 import { chatSend } from '../../api/gateway';
 import { MessageBubble } from './MessageBubble';
-import type { GroupMessage, ContentBlock, MessageContent, WorkerMeta } from '../../types';
+import type { GroupMessage, ContentBlock, MessageContent, WorkerMeta, ThreadMessage } from '../../types';
 import styles from './ThreadPanel.module.css';
 
 const PALETTE = ['#5b8cff', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+const EMPTY_THREAD_MESSAGES: ThreadMessage[] = [];
 
 function workerColor(workerId: string, allIds: string[]) {
   return PALETTE[Math.max(0, allIds.indexOf(workerId)) % PALETTE.length];
@@ -85,11 +87,18 @@ export function ThreadPanel({ groupId, parentMsg, groupWorkers, workerIds, onClo
   const addThreadMessage = useChatStore((s) => s.addThreadMessage);
   const deleteGroupMessage = useChatStore((s) => s.deleteGroupMessage);
   const deleteThreadMessage = useChatStore((s) => s.deleteThreadMessage);
-  // Derive directly from parentMsg prop — GroupChatPanel subscribes to groupMessages
-  // and passes down an updated parentMsg whenever updateThreadMessage fires, so this
-  // is always in sync without the inline-selector closure-capture issue.
-  const threadMessages = parentMsg.threadMessages ?? [];
+  // Subscribe directly to this thread's messages. useCallback stabilises the selector
+  // so Zustand doesn't re-subscribe on every render, while still capturing the latest
+  // groupId/parentMsg.id. EMPTY_THREAD_MESSAGES is module-level to avoid creating a
+  // new [] reference on each call (which would cause an infinite re-render loop).
+  const threadMessages = useChatStore(
+    useCallback(
+      (s) => s.groupMessages[groupId]?.find((m) => m.id === parentMsg.id)?.threadMessages ?? EMPTY_THREAD_MESSAGES,
+      [groupId, parentMsg.id]
+    )
+  );
 
+  const [isClosing, setIsClosing] = useState(false);
   const [noTarget, setNoTarget] = useState(false);
   const [panelWidth, setPanelWidth] = useState(360);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -207,12 +216,20 @@ export function ThreadPanel({ groupId, parentMsg, groupWorkers, workerIds, onClo
     el.focus();
   };
 
+  const handleClose = () => {
+    setIsClosing(true);
+    setTimeout(onClose, 180);
+  };
+
   return (
-    <div className={styles.panel} style={{ width: panelWidth }}>
+    <div
+      className={`${styles.panel} ${isClosing ? styles.panelClosing : ''}`}
+      style={{ width: isClosing ? 0 : panelWidth }}
+    >
       <div className={styles.resizeHandle} onMouseDown={handleResizeStart} />
       <div className={styles.header}>
         <span className={styles.title}>Thread</span>
-        <button className={styles.closeBtn} onClick={onClose} title="关闭 Thread">✕</button>
+        <button className={styles.closeBtn} onClick={handleClose} title="关闭 Thread"><X size={14} /></button>
       </div>
 
       <div className={styles.contentArea}>

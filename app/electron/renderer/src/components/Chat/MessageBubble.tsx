@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { FolderOpen } from "lucide-react";
 import type { ChatMessage } from "../../types";
 import rehypeHighlight from "rehype-highlight";
 import ReactMarkdown from "react-markdown";
@@ -376,7 +377,7 @@ export function MessageBubble({
             <code className="font-mono text-[0.9em] underline decoration-dashed underline-offset-2 break-all">
               {children}
             </code>
-            <span className="select-none text-[11px] leading-none">📂</span>
+            <FolderOpen size={13} className="text-gray-400" />
           </span>
         );
       }

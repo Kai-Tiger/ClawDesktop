@@ -37,12 +37,6 @@
   background: #fef2f2;
 }
 
-.icon {
-  font-size: 14px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
 .divider {
   height: 1px;
   background: #e5e7eb;

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { MessageSquare, Paperclip } from 'lucide-react';
 import { useChatStore } from '../../store/chatStore';
 import { chatSend, clearWorkerSessions, groupsUpdate, coordinatorPlan, groupMemoryRead, groupMemoryWrite } from '../../api/gateway';
 import { MessageBubble } from './MessageBubble';
@@ -89,12 +90,32 @@ function stripImages(content: MessageContent): MessageContent {
 export function GroupChatPanel() {
   const groups = useChatStore((s) => s.groups);
   const currentGroupId = useChatStore((s) => s.currentGroupId);
-  // Subscribe directly to the current group's message array so Zustand detects
-  // nested updates (e.g. updateThreadMessage) and triggers a re-render.
-  const messages = useChatStore(
-    (s) => (s.currentGroupId ? s.groupMessages[s.currentGroupId] : undefined) ?? EMPTY_GROUP_MESSAGES
-  ) as GroupMessage[];
-  const groupMessages = useChatStore((s) => s.groupMessages);
+
+  // Custom subscription that ignores threadMessages changes — prevents a full
+  // 300+ message re-render on every streaming chunk (which only updates threadMessages).
+  // Only re-renders when top-level message structure changes: new messages, content,
+  // role, or completedAt updates.
+  const [messages, setMessages] = useState<GroupMessage[]>(() => {
+    const gid = useChatStore.getState().currentGroupId;
+    return (gid ? useChatStore.getState().groupMessages[gid] : undefined) ?? EMPTY_GROUP_MESSAGES;
+  });
+  useEffect(() => {
+    return useChatStore.subscribe((state) => {
+      const gid = state.currentGroupId;
+      const newMsgs = (gid ? state.groupMessages[gid] : undefined) ?? EMPTY_GROUP_MESSAGES;
+      setMessages((prev) => {
+        if (newMsgs === prev) return prev;
+        if (newMsgs.length !== prev.length) return newMsgs;
+        const changed = newMsgs.some((msg, i) =>
+          msg.id !== prev[i]?.id ||
+          msg.role !== prev[i]?.role ||
+          msg.content !== prev[i]?.content ||
+          msg.completedAt !== prev[i]?.completedAt
+        );
+        return changed ? newMsgs : prev;
+      });
+    });
+  }, []);
   const addGroupMessage = useChatStore((s) => s.addGroupMessage);
   const addThreadMessage = useChatStore((s) => s.addThreadMessage);
   const deleteGroupMessage = useChatStore((s) => s.deleteGroupMessage);
@@ -650,7 +671,7 @@ export function GroupChatPanel() {
                 onClick={(e) => { e.stopPropagation(); setThreadParentId(msg.id); }}
                 title="回复到 Thread"
               >
-                💬
+                <MessageSquare size={14} />
               </button>
               {threadCount > 0 && (
                 <button
@@ -731,7 +752,7 @@ export function GroupChatPanel() {
             disabled={pipelineRunning}
             onClick={() => fileInputRef.current?.click()}
           >
-            📎
+            <Paperclip size={15} />
           </button>
           <button className={styles.sendBtn} onClick={handleSend} disabled={pipelineRunning}>
             {pipelineRunning ? '运行中…' : '发送'}
